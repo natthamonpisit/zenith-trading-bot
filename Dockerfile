@@ -8,7 +8,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
-    software-properties-common \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,9 +27,9 @@ EXPOSE 8501
 # Note: For production GCP, it's often better to run them as separate services, 
 # but for a single container deployment, we can use a wrapper.
 RUN echo '#!/bin/bash\n\
-python main.py & \n\
-streamlit run dashboard/app.py --server.port 8080 --server.address 0.0.0.0\n\
-' > start.sh && chmod +x start.sh
+    python main.py & \n\
+    streamlit run dashboard/app.py --server.port 8080 --server.address 0.0.0.0\n\
+    ' > start.sh && chmod +x start.sh
 
 # Streamlit runs on 8501 by default, but Cloud Run expects 8080
 ENV PORT=8080
