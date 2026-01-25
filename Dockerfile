@@ -24,14 +24,13 @@ COPY . .
 EXPOSE 8501
 
 # Run both the bot and the dashboard using a simple shell script
-# Note: For production GCP, it's often better to run them as separate services, 
-# but for a single container deployment, we can use a wrapper.
+# Use $PORT environment variable provided by Railway
 RUN echo '#!/bin/bash\n\
     python main.py & \n\
-    streamlit run dashboard/app.py --server.port 8080 --server.address 0.0.0.0\n\
+    streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0\n\
     ' > start.sh && chmod +x start.sh
 
-# Streamlit runs on 8501 by default, but Cloud Run expects 8080
+# Default port if not set (local testing)
 ENV PORT=8080
 
 CMD ["./start.sh"]
