@@ -113,11 +113,16 @@ if st.session_state.page == 'Dashboard':
         with st.container(border=True):
             st.markdown("##### 🏥 System Health")
             
+@st.cache_resource
+def get_spy_instance():
+    return Spy()
+
+# ... (inside columns)
             # Latency Measure
             t_start = time.time()
             try:
-                 # Fast call
-                 Spy().exchange.load_markets() 
+                 # Fast call using cached instance
+                 get_spy_instance().exchange.load_markets() 
                  api_ok = True
             except: api_ok = False
             latency = int((time.time() - t_start) * 1000)
@@ -167,7 +172,7 @@ if st.session_state.page == 'Dashboard':
             
             # Instantiate Spy for data & symbol list
             try:
-                spy = Spy()
+                spy = get_spy_instance()
                 # Get list of symbols (Top 100 or all)
                 # Filter for USDT pairs for cleaner list
                 all_symbols = sorted([market for market in spy.exchange.markets.keys() if "/USDT" in market])

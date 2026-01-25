@@ -171,7 +171,7 @@ class Spy:
         # Fill NaN
         cols = ['rsi', 'ema_20', 'ema_50', 'macd', 'signal', 'bb_upper', 'bb_lower']
         for c in cols:
-            df[c] = df[c].fillna(method='bfill').fillna(method='ffill')
+            df[c] = df[c].bfill().ffill()
         
         return df
 
