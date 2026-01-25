@@ -26,4 +26,12 @@ EXPOSE 8501
 # Run both the bot and the dashboard using a simple shell script
 # Use $PORT environment variable provided by Railway
 # Execute directly to ensure runtime variable expansion
-CMD sh -c "streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.enableCORS false --server.enableXsrfProtection false & python -u main.py"
+# CRITICAL: Run ONLY Streamlit first with aggressive cloud settings
+CMD sh -c "streamlit run dashboard/app.py \
+    --server.port $PORT \
+    --server.address 0.0.0.0 \
+    --server.headless true \
+    --server.fileWatcherType none \
+    --browser.gatherUsageStats false \
+    --server.enableCORS false \
+    --server.enableXsrfProtection false"
