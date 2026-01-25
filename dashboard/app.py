@@ -75,7 +75,7 @@ with st.sidebar:
     st.caption(f"System Time: {datetime.now().strftime('%H:%M:%S')}")
     st.markdown("---")
     
-    pages = ['Dashboard', 'Strategy Config', 'Trade History', 'Analyze Report', 'System Status']
+    pages = ['Dashboard', 'Simulation Mode', 'Strategy Config', 'Trade History', 'Analyze Report', 'System Status']
     for p in pages:
         if st.button(f"{'🔷' if st.session_state.page == p else '🔹'} {p}", key=f"nav_{p}", use_container_width=True):
             navigate_to(p)
@@ -274,10 +274,26 @@ elif st.session_state.page == 'Strategy Config':
              risk_per_trade = st.number_input("Risk Per Trade (%)", value=2.0)
         with c2:
              max_open_pos = st.number_input("Max Open Positions", value=5, step=1)
+
+        st.markdown("---")
+        st.markdown("#### 🎮 Operation Mode")
+        
+        # Mode Toggle
+        try:
+            conf_mode = db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
+            curr_mode = conf_mode.data[0]['value'] if conf_mode.data else "PAPER"
+        except: curr_mode = "PAPER"
+        
+        new_mode = st.radio("Select Mode", ["PAPER", "LIVE"], index=0 if curr_mode=="PAPER" else 1, horizontal=True)
+        if new_mode == "LIVE": 
+            st.warning("⚠️ LIVE MODE ENABLED: Real orders will be executed on Binance!")
+        else:
+            st.success("✅ PAPER MODE: Using mock balance ($1,000). Safe testing.")
              
         if st.button("💾 Save Configuration", type="primary"):
             try:
                 db.table("bot_config").upsert({"key": "AI_CONFIDENCE_THRESHOLD", "value": str(new_ai)}).execute()
+                db.table("bot_config").upsert({"key": "TRADING_MODE", "value": new_mode}).execute()
                 # Store others if needed
                 st.success("Configuration Updated Successfully!")
             except Exception as e:
@@ -308,6 +324,36 @@ elif st.session_state.page == 'Trade History':
                  st.info("No trading history found yet.")
         except Exception as e:
             st.error(f"Error loading history: {e}")
+
+elif st.session_state.page == 'Simulation Mode':
+    st.markdown("### 🎮 Simulation Mode (Paper Trading)")
+    st.caption("Test your strategies with mock money without risking real capital.")
+    
+    # Fetch Sim Data
+    try:
+        sim_wallet = db.table("simulation_portfolio").select("*").eq("id", 1).execute()
+        balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Mock Balance", f"${balance:,.2f}")
+        c2.metric("Unrealized PnL", "$0.00", "0%")
+        c3.metric("Win Rate", "N/A")
+        
+        st.divider()
+        st.subheader("📜 Paper Trade History")
+        
+        # Fetch Sim Signals
+        sim_signals = db.table("trade_signals").select("*, assets(symbol)").eq("is_sim", True).order("created_at", desc=True).execute()
+        
+        if sim_signals.data:
+            df_sim = pd.DataFrame(sim_signals.data)
+            df_sim['symbol'] = df_sim['assets'].apply(lambda x: x['symbol'] if x else 'UNKNOWN')
+            st.dataframe(df_sim[['created_at', 'symbol', 'signal_type', 'entry_target', 'status']])
+        else:
+             st.info("No paper trades yet. Waiting for signals...")
+             
+    except Exception as e:
+        st.error(f"Sim Error: {e}")
 
 elif st.session_state.page == 'System Status':
     st.markdown("### 🖥️ System Internals")

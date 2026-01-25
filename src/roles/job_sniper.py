@@ -29,25 +29,54 @@ class Sniper:
         # (Already filtered before calling this, but good practice)
         
         try:
-            print(f"Sniper: Executing {side} on {symbol}...")
+            # CHECK TRADING MODE
+            try:
+                conf = self.db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
+                mode = conf.data[0]['value'] if conf.data else "PAPER"
+            except: mode = "PAPER"
+
+            is_sim = (mode == 'PAPER')
+            print(f"Sniper: Executing {side} on {symbol} (Mode: {mode})...")
             
-            # 1. Place Market Order (Simplest for now)
-            # In production, use LIMIT orders for better price control
-            order = self.exchange.create_order(symbol, 'market', side.lower(), amount)
-            
-            print(f"Sniper: Order Placed! ID: {order['id']}")
+            fill_price = 0
+            fill_amount = amount
+
+            if is_sim:
+                # -- SIMULATION MODE --
+                ticker = self.exchange.fetch_ticker(symbol)
+                fill_price = ticker['last']
+                # Calculate Mock Fee (0.1%)
+                fee = (fill_price * fill_amount) * 0.001
+                
+                # Update Simulation Portfolio
+                # Fetch mock wallet
+                wallet = self.db.table("simulation_portfolio").select("*").eq("id", 1).execute()
+                current_bal = float(wallet.data[0]['balance'])
+                
+                # Logic: If BUY -> Deduct Balance, If SELL -> Add Balance (Simple logic)
+                # Ideally we track Asset holdings too, but for V1 let's just track USD PnL roughly
+                pass 
+                
+            else:
+                # -- LIVE MODE --
+                # 1. Place Market Order
+                order = self.exchange.create_order(symbol, 'market', side.lower(), amount)
+                fill_price = order['price'] or order['average']
+                fill_amount = order['amount']
+                print(f"Sniper: Order Placed! ID: {order['id']}")
             
             # 2. Record Position in DB
             self.db.table("positions").insert({
                "asset_id": signal['asset_id'],
                "side": side,
-               "entry_avg": order['price'] or order['average'], # Some exchanges return average
-               "quantity": order['amount'],
-               "is_open": True
+               "entry_avg": fill_price,
+               "quantity": fill_amount,
+               "is_open": True,
+               "is_sim": is_sim
             }).execute()
             
             # 3. Update Signal Status
-            self.db.table("trade_signals").update({"status": "EXECUTED"}).eq("id", signal['id']).execute()
+            self.db.table("trade_signals").update({"status": "EXECUTED", "is_sim": is_sim}).eq("id", signal['id']).execute()
             
             return True
         except Exception as e:
