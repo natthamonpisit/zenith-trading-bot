@@ -27,7 +27,8 @@ class Strategist:
         Analyze the following asset: {asset_symbol}.
         
         Technical Data:
-        {json.dumps(tech_data)}
+        Technical Data:
+        {json.dumps(tech_data, default=str)}
         
         Task:
         1. Evaluate the trend based on RSI, MACD, and ATR.
@@ -58,3 +59,28 @@ class Strategist:
         except Exception as e:
             print(f"Stratgeist Error: {e}")
             return None
+
+    def generate_performance_report(self, trade_history, days_range):
+        """
+        Generates a summary report of trading performance.
+        """
+        prompt = f"""
+        You are a Portfolio Manager writing a performance review.
+        Period: Last {days_range} days.
+        
+        Trade History Data:
+        {json.dumps(trade_history, default=str)}
+        
+        Task:
+        1. Summarize the overall trading activity (Total signals, Win Rate if applicable, Strategy behavior).
+        2. Identify patterns in the AI's decision making (Why were certain trades rejected?).
+        3. Give constructive feedback on the strategy settings.
+        4. Use a professional, encouraging tone.
+        
+        Output: Markdown formatted text.
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return f"Failed to generate report: {e}"
