@@ -14,24 +14,24 @@ class Spy:
     def __init__(self, exchange_id='binance'):
         self.api_key = os.environ.get("BINANCE_API_KEY")
         self.secret = os.environ.get("BINANCE_SECRET")
-        self.api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com") # Default to global if not set
+        self.api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
         
-        # Initialize Exchange
+        # Initialize basic CCXT instance without loading markets yet
         options = {
             'defaultType': 'spot',
             'fetchCurrencies': False, 
-            'fetchMarginPairs': False, # Explicitly disable margin pairs
-            'fetchPositions': False,   # Disable positions
+            'fetchMarginPairs': False, 
+            'fetchPositions': False,   
         } 
+        
+        # ... (CCXT Setup same as before)
         if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
-             # Manual override for Binance TH
              self.exchange = ccxt.binance({
                 'apiKey': self.api_key,
                 'secret': self.secret,
                 'options': options,
              })
-             # Aggressive URL override
-             # TRICK: Map 'v3' key to 'v1' URL because Binance TH uses v1 for klines
+             # Override URLs map manually
              self.exchange.urls['api'] = {
                 'public': 'https://api.binance.th/api/v1',
                 'private': 'https://api.binance.th/api/v1',
@@ -40,29 +40,24 @@ class Spy:
                 'sapi': 'https://api.binance.th/sapi/v1',
                 'sapiV1': 'https://api.binance.th/sapi/v1',
              }
-             
-             # CRITICAL: Manually disable capabilities to prevent auto-fetching missing endpoints
+             # Capabilities
              self.exchange.has['fetchMarginPairs'] = False
              self.exchange.has['fetchPositions'] = False
              self.exchange.has['fetchCurrencies'] = False
-             
-             # CRITICAL: Manually disable capabilities
-             self.exchange.has['fetchMarginPairs'] = False
-             self.exchange.has['fetchPositions'] = False
-             self.exchange.has['fetchCurrencies'] = False
+        else:
+             self.exchange = getattr(ccxt, exchange_id)({
+                'apiKey': self.api_key,
+                'secret': self.secret,
+                'options': options
+            })
 
-             
-             # CRITICAL: Manually disable capabilities
-             self.exchange.has['fetchMarginPairs'] = False
-             self.exchange.has['fetchPositions'] = False
-             self.exchange.has['fetchCurrencies'] = False
-
-             # DYNAMIC LOAD: Fetch actual exchangeInfo from Binance TH (v1) manually
-             # Because CCXT load_markets() fails on sapi/config
+    def load_markets_custom(self):
+        """Lazy load markets specifically for Binance TH if needed"""
+        if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
              try:
                  import requests
                  print("Spy: Fetching markets from Binance TH (v1/exchangeInfo)...")
-                 response = requests.get('https://api.binance.th/api/v1/exchangeInfo')
+                 response = requests.get('https://api.binance.th/api/v1/exchangeInfo', timeout=5) # Add timeout
                  data = response.json()
                  
                  markets_map = {}
@@ -72,58 +67,37 @@ class Spy:
                  for s in data['symbols']:
                      if s['status'] != 'TRADING': continue
                      
-                     market_id = s['symbol'] # e.g. BTCUSDT
+                     market_id = s['symbol']
                      base_id = s['baseAsset']
                      quote_id = s['quoteAsset']
-                     symbol = f"{base_id}/{quote_id}" # e.g. BTC/USDT
+                     symbol = f"{base_id}/{quote_id}"
                      
                      markets_map[symbol] = {
                          'id': market_id,
                          'symbol': symbol,
                          'base': base_id,
                          'quote': quote_id,
-                         'baseId': base_id,
-                         'quoteId': quote_id,
                          'active': True,
-                         'type': 'spot',
-                         'spot': True,
-                         'info': s
+                         'type': 'spot'
                      }
                      ids_map[market_id] = symbol
-                     
-                     # Add currencies
-                     if base_id not in currencies_map: currencies_map[base_id] = {'id': base_id}
-                     if quote_id not in currencies_map: currencies_map[quote_id] = {'id': quote_id}
                  
                  self.exchange.markets = markets_map
                  self.exchange.ids = ids_map
-                 self.exchange.currencies = currencies_map
-                 print(f"Spy: Loaded {len(markets_map)} markets from Binance TH.")
-                 
+                 print(f"Spy: Loaded {len(markets_map)} markets.")
              except Exception as e:
                  print(f"Spy: Failed to dynamic load markets: {e}")
-                 # Fallback to BTC/USDT if dynamic load fails
-                 self.exchange.markets = {
-                     'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT', 'active': True, 'type': 'spot'}
-                 }
+                 # Fallback
+                 self.exchange.markets = {'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT'}}
                  self.exchange.ids = {'BTCUSDT': 'BTC/USDT'}
         else:
-            self.exchange = getattr(ccxt, exchange_id)({
-                'apiKey': self.api_key,
-                'secret': self.secret,
-                'options': options
-            })
+            self.exchange.load_markets()
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '1h', limit: int = 100):
-        """
-        Fetches OHLCV data.
-        :param symbol: e.g. 'BTC/USDT' (Make sure to use TH pairs like BTC/THB if using TH exchange exclusively?) 
-                       Wait, Binance TH supports USDT pairs too? Usually yes.
-        """
         try:
-            # Check market loading
+            # Check market loading (Lazy Load)
             if not self.exchange.markets:
-                self.exchange.load_markets()
+                self.load_markets_custom()
             
             # Fetch data
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
