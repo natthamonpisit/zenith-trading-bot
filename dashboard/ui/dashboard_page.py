@@ -148,7 +148,7 @@ def render_active_holdings(db):
                  with c2: 
                      st.markdown("### No Assets in Progress")
                      st.caption("The Sniper is scanning. Active positions will appear here.")
-    except: pass
+    except Exception as e: st.error(f"Error rendering holdings: {e}")
 
 def render_chart_section():
     try:
