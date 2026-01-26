@@ -70,8 +70,46 @@ st.markdown("""
 if 'page' not in st.session_state: st.session_state.page = 'Dashboard'
 if 'timeframe' not in st.session_state: st.session_state.timeframe = '1h'
 if 'selected_indicators' not in st.session_state: st.session_state.selected_indicators = ['EMA 20', 'EMA 50']
+if 'entered' not in st.session_state: st.session_state.entered = False
 
 def navigate_to(page): st.session_state.page = page
+
+# --- LANDING PAGE (Gatekeeper) ---
+if not st.session_state.entered:
+    # Full screen centering
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<br>"*5, unsafe_allow_html=True)
+        st.markdown("""
+        <div style="text-align: center;">
+            <h1 style="font-size: 80px; margin-bottom: 0;">🐺</h1>
+            <h1 style="font-size: 60px; background: -webkit-linear-gradient(#eee, #333); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">ZENITH OS</h1>
+            <p style="color: grey; font-size: 18px;">AI-Powered Autonomous Trading System</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Status Checks
+        with st.status("🚀 System Initialization...", expanded=True) as status:
+            st.write("🔌 Connecting to Secure Gateway...")
+            time.sleep(1)
+            st.write("🧠 Waking up Gemini AI...")
+            time.sleep(1)
+            st.write("💹 Fetching Live Market Data...")
+            time.sleep(1)
+            status.update(label="✅ System Ready", state="complete", expanded=False)
+            
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        if st.button("🔌 CONNECT TO SYSTEM", type="primary", use_container_width=True):
+            st.session_state.entered = True
+            st.rerun()
+            
+    # Stop execution here so sidebar doesn't show
+    st.stop()
+
+# --- MAIN APP START ---
 
 # --- LEFT SIDEBAR (Navigation) ---
 with st.sidebar:
