@@ -22,28 +22,35 @@ class Spy:
             'fetchCurrencies': False, 
             'fetchMarginPairs': False, 
             'fetchPositions': False,   
+            'adjustForTimeDifference': True,
+            'recvWindow': 10000,
+            'warnOnFetchMarginPairs': False, # Disable internal warnings/fetches
         } 
         
-        # ... (CCXT Setup same as before)
+        # Override for Binance TH specific behavior
         if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
              self.exchange = ccxt.binance({
                 'apiKey': self.api_key,
                 'secret': self.secret,
                 'options': options,
              })
-             # Override URLs map manually
+             # Override URLs map manually to point to TH
              self.exchange.urls['api'] = {
                 'public': 'https://api.binance.th/api/v1',
                 'private': 'https://api.binance.th/api/v1',
                 'v3': 'https://api.binance.th/api/v1', 
                 'v1': 'https://api.binance.th/api/v1',
                 'sapi': 'https://api.binance.th/sapi/v1',
-                'sapiV1': 'https://api.binance.th/sapi/v1',
              }
-             # Capabilities
+             # Strictly disable all non-spot features to prevent 404 probes
              self.exchange.has['fetchMarginPairs'] = False
              self.exchange.has['fetchPositions'] = False
              self.exchange.has['fetchCurrencies'] = False
+             self.exchange.has['fetchIsolatedMarginPairs'] = False
+             self.exchange.has['fetchCrossMarginPairs'] = False
+             self.exchange.has['margin'] = False
+             self.exchange.has['swap'] = False
+             self.exchange.has['future'] = False
         else:
              self.exchange = getattr(ccxt, exchange_id)({
                 'apiKey': self.api_key,
@@ -85,15 +92,13 @@ class Spy:
                          'info': s
                      }
                      ids_map[market_id] = symbol
-                 
-                 self.exchange.markets = markets_map
-                 self.exchange.ids = ids_map
-                 print(f"Spy: Loaded {len(markets_map)} markets.")
-             except Exception as e:
-                 print(f"Spy: Failed to dynamic load markets: {e}")
-                 # Fallback
-                 self.exchange.markets = {'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT'}}
-                 self.exchange.ids = {'BTCUSDT': 'BTC/USDT'}
+                                  # Use set_markets to correctly initialize internal CCXT state
+                  self.exchange.set_markets(markets_map)
+                  print(f"Spy: Loaded {len(markets_map)} markets.")
+              except Exception as e:
+                  print(f"Spy: Failed to dynamic load markets: {e}")
+                  # Fallback
+                  self.exchange.set_markets({'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT', 'active': True, 'type': 'spot', 'spot': True}})
         else:
             self.exchange.load_markets()
 
@@ -129,7 +134,7 @@ class Spy:
         """Fetches account balance securely"""
         try:
              # Force load if valid
-             balance = self.exchange.fetch_balance()
+             balance = self.exchange.fetch_balance({'type': 'spot'})
              return balance
         except Exception as e:
              print(f"Spy (Balance) Error: {e}")

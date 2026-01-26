@@ -38,6 +38,11 @@ class Sniper:
             is_sim = (mode == 'PAPER')
             print(f"Sniper: Executing {side} on {symbol} (Mode: {mode})...")
             
+            # Ensure markets are loaded (Required for cost_to_precision)
+            if not self.exchange.markets:
+                print("Sniper: Markets not loaded, fetching now...")
+                self.spy.load_markets_custom()
+            
             fill_price = 0
             fill_amount = amount
 
@@ -60,9 +65,23 @@ class Sniper:
             else:
                 # -- LIVE MODE --
                 # 1. Place Market Order
-                order = self.exchange.create_order(symbol, 'market', side.lower(), amount)
-                fill_price = order['price'] or order['average']
-                fill_amount = order['amount']
+                # For Binance/Binance TH: Use quoteOrderQty for BUY to spend USDT amount
+                if side.upper() == 'BUY':
+                    print(f"Sniper: Placing Market BUY for {amount} USDT...")
+                    order = self.exchange.create_order(symbol, 'market', 'buy', amount, None, {
+                        'quoteOrderQty': self.exchange.cost_to_precision(symbol, amount),
+                        'type': 'spot'
+                    })
+                else:
+                    # For SELL: 'amount' is in base currency (like 0.001 BTC)
+                    # Note: We might need to fetch current balance to know how much to sell if 'amount' is USD
+                    print(f"Sniper: Placing Market SELL for {amount} qty...")
+                    order = self.exchange.create_order(symbol, 'market', 'sell', amount, None, {
+                        'type': 'spot'
+                    })
+                
+                fill_price = order.get('price') or order.get('average', 0)
+                fill_amount = order.get('amount', amount)
                 print(f"Sniper: Order Placed! ID: {order['id']}")
             
             # 2. Record Position in DB
