@@ -193,39 +193,91 @@ if st.session_state.page == 'Dashboard':
             st.plotly_chart(fig_gauge, use_container_width=True)
             st.caption("AI Market Confidence")
 
-        # 3. Portfolio / Wallet
+        # 3. Dynamic Portfolio
         with st.container(border=True):
-            st.markdown("##### 💰 Portfolio (Binance)")
+            # Check Mode
             try:
-                spy_instance = get_spy_instance()
-                # Ensure markets loaded safely
-                if not spy_instance.exchange.markets: spy_instance.load_markets_custom()
+                conf_mode = db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
+                current_mode = conf_mode.data[0]['value'] if conf_mode.data else "PAPER"
+            except: current_mode = "PAPER"
+            
+            # Remove quotes if present
+            current_mode = current_mode.replace('"', '')
+
+            if current_mode == "PAPER":
+                st.markdown("##### 🎮 Paper Portfolio")
+                st.caption("Simulation Mode Active")
                 
-                balance = spy_instance.get_account_balance()
-                
-                if balance:
-                    # Filter for non-zero assets
-                    # 'total' key holds the total amounts
-                    total_bal = balance.get('total', {})
-                    non_zero = {k: v for k, v in total_bal.items() if v > 0}
+                try:
+                    # Get Sim Data
+                    sim = db.table("simulation_portfolio").select("*").eq("id", 1).execute()
+                    balance = float(sim.data[0]['balance']) if sim.data else 1000.0
                     
-                    if non_zero:
-                        for asset, amount in non_zero.items():
-                             # Simple approximate value (mock price for now as fetching all tickers is heavy)
-                             st.markdown(f"""
-                             <div style='display:flex; justify-content:space-between; margin:5px 0;'>
-                                <span>**{asset}**</span>
-                                <span style='color:#00FF94;'>{amount:,.4f}</span>
-                             </div>
-                             """, unsafe_allow_html=True)
-                             # Progress bar for visual weight (mock)
-                             st.progress(min(100, int((amount * 100) % 100)) or 10) 
+                    # Estimate Invested (Mock logic: Sum of Entry * Qty of Open Sim Positions)
+                    pos = db.table("positions").select("*").eq("is_sim", True).eq("is_open", True).execute()
+                    invested = sum([float(p['entry_avg']) * float(p['quantity']) for p in pos.data]) if pos.data else 0.0
+                    
+                    total_equity = balance + invested # Simplified equity
+                    
+                    st.metric("Total Equity (Sim)", f"${total_equity:,.2f}")
+                    
+                    c1, c2 = st.columns(2)
+                    c1.metric("Available Cash", f"${balance:,.2f}")
+                    c2.metric("Invested", f"${invested:,.2f}")
+                    
+                    st.progress(min(100, int((invested / total_equity)*100)) if total_equity > 0 else 0)
+                    
+                except Exception as e:
+                    st.error(f"Sim Data Error: {e}")
+
+            else:
+                # LIVE MODE
+                st.markdown("##### 💰 Real Portfolio (Binance)")
+                st.warning("⚠️ LIVE TRADING ACTIVE")
+                
+                try:
+                    spy_instance = get_spy_instance()
+                    if not spy_instance.exchange.markets: spy_instance.load_markets_custom()
+                    
+                    balance = spy_instance.get_account_balance()
+                    thb_rate = spy_instance.get_usdt_thb_rate()
+                    
+                    if balance:
+                        total_bal = balance.get('total', {})
+                        non_zero = {k: v for k, v in total_bal.items() if v > 0}
+                        
+                        # Calculate Total USDT Value approx
+                        total_usdt_est = 0
+                        
+                        if non_zero:
+                            for asset, amount in non_zero.items():
+                                 val_usdt = amount # Base assumption for USDT
+                                 if asset != 'USDT':
+                                     # Try fetch price or use mock
+                                     # For MVP, just list amounts
+                                     pass
+                                 
+                                 # Convert to THB
+                                 val_thb = amount * thb_rate if asset == 'USDT' else 0 # Simple logic for now
+                                 
+                                 st.markdown(f"""
+                                 <div style='display:flex; justify-content:space-between; margin:5px 0;'>
+                                    <span>**{asset}**</span>
+                                    <span>{amount:,.4f}</span>
+                                 </div>
+                                 """, unsafe_allow_html=True)
+                                 
+                                 if asset == 'USDT': total_usdt_est += amount
+                        
+                            st.divider()
+                            est_thb = total_usdt_est * thb_rate
+                            st.metric("Est. USDT Value", f"{total_usdt_est:,.2f} USDT", f"≈ {est_thb:,.2f} THB")
+                        else:
+                            st.caption("No assets found > 0")
                     else:
-                        st.caption("No assets found > 0")
-                else:
-                    st.warning("Failed to load balance.")
-            except Exception as e:
-                st.error(f"Wallet Error: {e}")
+                        st.warning("Failed to load wallet.")
+                except Exception as e:
+                    st.error(f"Wallet Error: {e}")
 
         # 4. Market Watch
         with st.container(border=True):

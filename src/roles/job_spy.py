@@ -115,6 +115,16 @@ class Spy:
             print(f"Spy (Data Fetch) Error: {e}")
             return None
 
+    def get_usdt_thb_rate(self):
+        """Fetches USDT/THB price for display"""
+        try:
+            # Try fetching from exchange if available, else approximate
+            # Binance TH usually has USDT/THB
+            ticker = self.exchange.fetch_ticker('USDT/THB')
+            return float(ticker['last'])
+        except:
+            return 35.0  # Fallback constant
+
     def get_account_balance(self):
         """Fetches account balance securely"""
         try:
