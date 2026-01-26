@@ -210,6 +210,10 @@ if st.session_state.page == 'Dashboard':
             # Instantiate Spy for data & symbol list
             try:
                 spy = get_spy_instance()
+                # Ensure markets are loaded (Lazy loading fix)
+                if not spy.exchange.markets:
+                    spy.load_markets_custom()
+                
                 # Get list of symbols (Top 100 or all)
                 # Filter for USDT pairs for cleaner list
                 all_symbols = sorted([market for market in spy.exchange.markets.keys() if "/USDT" in market])
