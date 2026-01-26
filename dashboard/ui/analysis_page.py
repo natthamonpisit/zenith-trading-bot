@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from src.roles.job_ai_analyst import Strategist
+from src.roles.job_analysis import Strategist
 
 def render_analysis_page(db):
     st.markdown("### 📊 AI Performance Analysis Report")
