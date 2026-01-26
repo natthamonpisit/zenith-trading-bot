@@ -124,7 +124,11 @@ def render_active_holdings(db):
                     curr_price = ticker['last']
                 except: curr_price = entry_price
                 
-                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                if 'created_at' in p:
+                    utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                else:
+                    utc_entry = datetime.now(pytz.utc) # Fallback if column missing
+
                 duration = datetime.now(pytz.utc) - utc_entry
                 dur_str = f"{duration.days}d {duration.seconds//3600}h {(duration.seconds//60)%60}m"
                 
