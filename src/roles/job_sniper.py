@@ -120,6 +120,10 @@ class Sniper:
                 fill_amount = order.get('amount', amount)
                 print(f"Sniper: Order Placed! ID: {order['id']}")
             
+            # Guard: If we reached here without BUY/SELL logic triggering above (e.g. unknown side), raise error
+            if side.upper() not in ['BUY', 'SELL']:
+                raise Exception(f"Invalid Signal Type: {side}")
+
             # 2. Record Position / History in DB
             # For BUY, we ALWAYS create a new open position
             # For SELL (Sim), we already closed the position above, but we might want to record the "Sell" action too.

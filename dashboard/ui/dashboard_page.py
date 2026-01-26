@@ -88,8 +88,8 @@ def render_dashboard_page(db):
              st.markdown("#### 📈 Active Market Chart")
              render_chart_section()
 
-        if current_mode == "LIVE":
-            render_live_holdings(db)
+        # UNIFIED HOLDINGS VIEW
+        render_active_holdings(db)
         
         # AI Scorecards
         with st.container(border=True):
@@ -102,6 +102,44 @@ def render_dashboard_page(db):
                     with st.expander(f"{'✅' if log['status']=='EXECUTED' else '🛡️'} {ts} | {symbol} | {log['signal_type']}"):
                          st.info(f"💡 **AI Reasoning:** {log['judge_reason']}")
             except: pass
+
+def render_active_holdings(db):
+    # Fetch ALL active positions
+    try:
+        open_pos = db.table("positions").select("*, assets(symbol)").eq("is_open", True).execute()
+        if open_pos.data:
+            st.markdown("#### ⚡ Assets in Progress")
+            for p in open_pos.data:
+                is_sim = p.get('is_sim', True)
+                symbol = p['assets']['symbol'] if p['assets'] else "UNKNOWN"
+                qty = float(p['quantity'])
+                entry_price = float(p['entry_avg'])
+                
+                # Get Sim/Live Tag
+                mode_tag = "🎮 SIM" if is_sim else "🔴 LIVE"
+                mode_color = "#00FF94" if is_sim else "#FF0055"
+                
+                try: 
+                    ticker = get_spy_instance().exchange.fetch_ticker(symbol)
+                    curr_price = ticker['last']
+                except: curr_price = entry_price
+                
+                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                duration = datetime.now(pytz.utc) - utc_entry
+                dur_str = f"{duration.days}d {duration.seconds//3600}h {(duration.seconds//60)%60}m"
+                
+                pnl = (curr_price - entry_price) * qty
+                pnl_pct = (pnl / (entry_price * qty)) * 100 if entry_price > 0 else 0
+                color = "#00FF94" if pnl >= 0 else "#FF4B4B"
+
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+                    with c1: 
+                        st.markdown(f"**{symbol}**")
+                        st.markdown(f"<span style='background-color:{mode_color}20; color:{mode_color}; padding: 2px 6px; border-radius: 4px; font-size: 0.7em;'>{mode_tag}</span>", unsafe_allow_html=True)
+                    with c2: st.markdown(f"Entry: `${entry_price:,.2f}`")
+                    with c3: st.markdown(f"Duration: `{dur_str}`")
+                    with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
 
 def render_chart_section():
     try:

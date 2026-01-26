@@ -73,6 +73,14 @@ class Judge:
                  reason=f"AI Uncertainty: {ai_conf}% < {min_conf}%"
              )
 
+        # Rule: Explicitly REJECT 'WAIT' signals
+        if ai_rec in ['WAIT', 'HOLD']:
+             return TradeDecision(
+                 decision="REJECTED", 
+                 size=0, 
+                 reason=f"AI Recommendation is {ai_rec}"
+             )
+
         # --- 2. POSITION SIZING ---
         # Standardized Key: POSITION_SIZE_PCT
         # Default to 5% if not set
