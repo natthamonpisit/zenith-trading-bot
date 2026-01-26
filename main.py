@@ -144,15 +144,20 @@ def run_bot_cycle():
              return
     except: pass
 
-    # 2. RADAR/SCOUT: Scan Market
-    # Using 'Radar' role to find targets
+    # 1. HEAD HUNTER: Fundamental Screen (Weekly/Daily)
+    # For now, we just log its pulse
+    log_activity("HeadHunter", "📋 Screening market fundamentals (ROE/PEG)...")
+    head_hunter.screen_market() 
+
+    # 2. RADAR: Scan Market
+    log_activity("Radar", "📡 Scanning 24h Top Gainers & Volume...")
     targets = radar.scan_market() 
     if not targets:
         targets = ["BTC/USDT", "ETH/USDT"]
 
     print(f"🎯 Targets by Radar: {targets}")
     
-    # 3. SPY B: News (Placeholder)
+    # 3. SPY (Info): Check News
     # news = news_spy.fetch_latest_news()
     
     # Process each target

@@ -91,17 +91,78 @@ def render_dashboard_page(db):
         # UNIFIED HOLDINGS VIEW
         render_active_holdings(db)
         
-        # AI Scorecards
-        with st.container(border=True):
-            st.markdown("#### 🧠 AI Scorecards")
-            try:
-                signals = db.table("trade_signals").select("*, assets(symbol)").order("created_at", desc=True).limit(5).execute()
-                for log in signals.data:
-                    symbol = log['assets']['symbol'] if log['assets'] else "UNKNOWN"
-                    ts = to_local_time(log['created_at'], '%H:%M')
-                    with st.expander(f"{'✅' if log['status']=='EXECUTED' else '🛡️'} {ts} | {symbol} | {log['signal_type']}"):
-                         st.info(f"💡 **AI Reasoning:** {log['judge_reason']}")
-            except: pass
+        # 6-ROLE LIVE STATUS
+        render_role_cards(db)
+
+def render_role_cards(db):
+    st.markdown("#### 🧩 Team Status (Live)")
+    
+    # 1. Fetch latest logs to find status for each role
+    try:
+        # Fetch enough recent logs to likely cover all roles
+        logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(50).execute()
+        
+        roles = {
+            "HeadHunter": {"icon": "📋", "desc": "Screener"},
+            "Radar":      {"icon": "📡", "desc": "Scanner"},
+            "Spy":        {"icon": "🕵️", "desc": "Data Collector"},
+            "Strategist": {"icon": "🧠", "desc": "AI Analysis"},
+            "Judge":      {"icon": "⚖️", "desc": "Risk Control"},
+            "Sniper":     {"icon": "🔫", "desc": "Execution"}
+        }
+        
+        # Parse latest state
+        role_state = {r: {"msg": "Standby...", "time": "--:--", "status": "IDLE"} for r in roles}
+        
+        if logs.data:
+            for log in logs.data:
+                r = log['role']
+                if r in role_state and role_state[r]['status'] == "IDLE":
+                    # Found latest log for this role
+                    role_state[r]['msg'] = log['message']
+                    role_state[r]['time'] = to_local_time(log['created_at'], "%H:%M:%S")
+                    role_state[r]['status'] = "ACTIVE"
+                    role_state[r]['level'] = log['level'] # ERROR/WARNING/SUCCESS
+        
+        # 2. Render Grid (3 Columns x 2 Rows)
+        # Row 1: HeadHunter, Radar, Spy
+        c1, c2, c3 = st.columns(3)
+        cols = [c1, c2, c3]
+        row1_keys = ["HeadHunter", "Radar", "Spy"]
+        
+        for i, role in enumerate(row1_keys):
+            state = role_state[role]
+            meta = roles[role]
+            with cols[i]:
+                with st.container(border=True):
+                    st.markdown(f"**{meta['icon']} {role}**")
+                    st.caption(f"{meta['desc']} | 🕒 {state['time']}")
+                    st.info(f"{state['msg']}")
+
+        # Row 2: Strategist, Judge, Sniper
+        c4, c5, c6 = st.columns(3)
+        cols2 = [c4, c5, c6]
+        row2_keys = ["Strategist", "Judge", "Sniper"]
+        
+        for i, role in enumerate(row2_keys):
+            state = role_state[role]
+            meta = roles[role]
+            with cols2[i]:
+                with st.container(border=True):
+                    st.markdown(f"**{meta['icon']} {role}**")
+                    st.caption(f"{meta['desc']} | 🕒 {state['time']}")
+                    # Color code based on level
+                    if state.get('level') == 'ERROR':
+                        st.error(state['msg'])
+                    elif state.get('level') == 'WARNING':
+                        st.warning(state['msg'])
+                    elif state.get('level') == 'SUCCESS':
+                        st.success(state['msg'])
+                    else:
+                        st.info(state['msg'])
+
+    except Exception as e:
+        st.error(f"Team Status Error: {e}")
 
 def render_active_holdings(db):
     # Fetch ALL active positions
