@@ -214,7 +214,8 @@ if st.session_state.page == 'Dashboard':
                 # Filter for USDT pairs for cleaner list
                 all_symbols = sorted([market for market in spy.exchange.markets.keys() if "/USDT" in market])
                 if not all_symbols: all_symbols = ["BTC/USDT", "ETH/USDT"] # Fallback
-            except:
+            except Exception as e:
+                 st.error(f"⚠️ Spy Init Failed: {e}")
                  all_symbols = ["BTC/USDT"]
                  spy = None
     
