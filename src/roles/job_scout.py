@@ -6,7 +6,7 @@ class Radar:
     Role: Scans for top gainers or volume spikes.
     Currently reuses Spy's volume scan logic.
     """
-    def __init__(self, spy_instance: Spy):
+    def __init__(self, spy_instance: PriceSpy):
         self.spy = spy_instance
 
     def scan_market(self):

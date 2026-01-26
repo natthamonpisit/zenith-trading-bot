@@ -25,7 +25,6 @@ class PriceSpy:
             'adjustForTimeDifference': True,
             'recvWindow': 10000,
             'warnOnFetchMarginPairs': False,
-            'timeout': 10000, # 10 seconds timeout (Critical for preventing hangs)
         } 
         
         # Override for Binance TH specific behavior
@@ -33,6 +32,7 @@ class PriceSpy:
              self.exchange = ccxt.binance({
                 'apiKey': self.api_key,
                 'secret': self.secret,
+                'timeout': 10000, # Correct location
                 'options': options,
              })
              # Override URLs map manually to point to TH
