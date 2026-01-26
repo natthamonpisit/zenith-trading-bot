@@ -25,6 +25,10 @@ fileWatcherType = 'none'
 gatherUsageStats = false
 " > .streamlit/config.toml
 
+# Run Bot in background
+echo "🤖 Starting Trading Bot..."
+python main.py &
+
 # Run Streamlit in background to check health
 streamlit run dashboard/app.py &
 PID=$!

@@ -12,6 +12,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.database import get_db
 from src.roles.job_spy import Spy
 
+@st.cache_resource
+def get_spy_instance():
+    return Spy()
+
 # --- CONFIG ---
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
 db = get_db()
@@ -113,11 +117,6 @@ if st.session_state.page == 'Dashboard':
         with st.container(border=True):
             st.markdown("##### 🏥 System Health")
             
-@st.cache_resource
-def get_spy_instance():
-    return Spy()
-
-# ... (inside columns)
             # Latency Measure
             t_start = time.time()
             try:
