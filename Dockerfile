@@ -36,4 +36,4 @@ ENV PYTHONUNBUFFERED=1
 COPY run.sh .
 RUN chmod +x run.sh
 
-CMD ["./run.sh"]
+CMD ["python", "diagnostic_server.py"]

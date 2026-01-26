@@ -10,5 +10,5 @@ def hello():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
-    print(f"🚀 Starting Flask on 0.0.0.0:{port}")
+    print(f"🚀 Starting Flask on 0.0.0.0:{port}", flush=True)
     app.run(host='0.0.0.0', port=port)
