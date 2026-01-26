@@ -58,3 +58,9 @@ elif st.session_state.page == 'System Status':
     render_status_page(db)
 elif st.session_state.page == 'Analyze Report':
     render_analysis_page(db)
+
+# --- AUTO REFRESH LOGIC ---
+if st.session_state.get('auto_refresh'):
+    import time
+    time.sleep(10)
+    st.rerun()

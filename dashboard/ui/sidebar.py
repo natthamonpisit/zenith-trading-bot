@@ -25,15 +25,21 @@ def render_sidebar(db):
         st.markdown("#### 🚨 Emergency Control")
         current_status = get_cfg(db, "BOT_STATUS", "ACTIVE").replace('"', '')
         
-        if current_status == "ACTIVE":
-            if st.button("🔴 STOP TRADING", type="primary", use_container_width=True):
-                db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
-                st.rerun()
-        else:
-            st.error("⛔ SYSTEM HALTED")
-            if st.button("🟢 RESUME TRADING", use_container_width=True):
-                db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
-                st.rerun()
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            if current_status == "ACTIVE":
+                if st.button("🔴 STOP TRADING", type="primary", use_container_width=True):
+                    db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
+                    st.rerun()
+            else:
+                st.error("⛔ SYSTEM HALTED")
+                if st.button("🟢 RESUME TRADING", use_container_width=True):
+                    db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
+                    st.rerun()
+        
+        # Auto Refresh Toggle
+        if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = True
+        st.session_state.auto_refresh = st.toggle("🔄 Auto Refresh (10s)", value=st.session_state.auto_refresh)
 
         # System Console
         st.markdown("---")
