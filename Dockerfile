@@ -27,11 +27,8 @@ EXPOSE 8501
 # Use $PORT environment variable provided by Railway
 # Execute directly to ensure runtime variable expansion
 # CRITICAL: Run ONLY Streamlit first with aggressive cloud settings
-CMD sh -c "streamlit run dashboard/app.py \
-    --server.port $PORT \
-    --server.address 0.0.0.0 \
-    --server.headless true \
-    --server.fileWatcherType none \
-    --browser.gatherUsageStats false \
-    --server.enableCORS false \
-    --server.enableXsrfProtection false"
+# Copy and set permissions for entrypoint
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+CMD ["./entrypoint.sh"]
