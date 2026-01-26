@@ -32,11 +32,8 @@ EXPOSE 8501
 ENV CACHE_BUST=20260126_2
 ENV PYTHONUNBUFFERED=1
 
-# Direct simple command - no scripts
-# Direct simple command - no scripts
-# FIX: Use shell to create config.toml dynamically with the CORRECT PORT then run
-CMD sh -c "mkdir -p .streamlit && \
-    echo '[server]\nheadless = true\naddress = \"0.0.0.0\"\nport = '\"$PORT\"'\nenableCORS = false\nenableXsrfProtection = false\nfileWatcherType = \"none\"\n\n[browser]\ngatherUsageStats = false' > .streamlit/config.toml && \
-    streamlit run dashboard/app.py & \
-    sleep 5 && \
-    python -u main.py"
+# Copy run script
+COPY run.sh .
+RUN chmod +x run.sh
+
+CMD ["./run.sh"]
