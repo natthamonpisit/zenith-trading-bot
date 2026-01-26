@@ -61,46 +61,44 @@ class Spy:
     def load_markets_custom(self):
         """Lazy load markets specifically for Binance TH if needed"""
         if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
-             try:
-                 import requests
-                 print("Spy: Fetching markets from Binance TH (v1/exchangeInfo)...")
-                 response = requests.get('https://api.binance.th/api/v1/exchangeInfo', timeout=5) # Add timeout
-                 data = response.json()
-                 
-                 markets_map = {}
-                 ids_map = {}
-                 currencies_map = {}
-                 
-                 for s in data['symbols']:
-                     if s['status'] != 'TRADING': continue
-                     
-                     market_id = s['symbol']
-                     base_id = s['baseAsset']
-                     quote_id = s['quoteAsset']
-                     symbol = f"{base_id}/{quote_id}"
-                     
-                     markets_map[symbol] = {
-                         'id': market_id,
-                         'symbol': symbol,
-                         'base': base_id,
-                         'quote': quote_id,
-                         'baseId': base_id,
-                         'quoteId': quote_id,
-                         'active': True,
-                         'type': 'spot',
-                         'spot': True,
-                         'info': s
-                     }
-                     ids_map[market_id] = symbol
-                                  # Use set_markets to correctly initialize internal CCXT state
-                  self.exchange.set_markets(markets_map)
-                  print(f"Spy: Loaded {len(markets_map)} markets.")
-              except Exception as e:
-                  print(f"Spy: Failed to dynamic load markets: {e}")
-                  # Fallback
-                  self.exchange.set_markets({'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT', 'active': True, 'type': 'spot', 'spot': True}})
+            try:
+                import requests
+                print("Spy: Fetching markets from Binance TH (v1/exchangeInfo)...")
+                response = requests.get('https://api.binance.th/api/v1/exchangeInfo', timeout=5)
+                data = response.json()
+                
+                markets_map = {}
+                for s in data['symbols']:
+                    if s['status'] != 'TRADING': continue
+                    
+                    market_id = s['symbol']
+                    base_id = s['baseAsset']
+                    quote_id = s['quoteAsset']
+                    symbol = f"{base_id}/{quote_id}"
+                    
+                    markets_map[symbol] = {
+                        'id': market_id,
+                        'symbol': symbol,
+                        'base': base_id,
+                        'quote': quote_id,
+                        'baseId': base_id,
+                        'quoteId': quote_id,
+                        'active': True,
+                        'type': 'spot',
+                        'spot': True,
+                        'info': s
+                    }
+                
+                # Use set_markets to correctly initialize internal CCXT state
+                self.exchange.set_markets(markets_map)
+                print(f"Spy: Loaded {len(markets_map)} markets.")
+            except Exception as e:
+                print(f"Spy: Failed to dynamic load markets: {e}")
+                # Fallback
+                self.exchange.set_markets({'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT', 'active': True, 'type': 'spot', 'spot': True}})
         else:
             self.exchange.load_markets()
+
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '1h', limit: int = 100):
         try:
