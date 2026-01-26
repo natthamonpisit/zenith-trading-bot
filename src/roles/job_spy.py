@@ -138,6 +138,36 @@ class Spy:
              print(f"Spy (Balance) Error: {e}")
              return None
 
+    def get_top_symbols(self, limit=10):
+        """Fetches top USDT pairs by 24h Volume"""
+        try:
+            if not self.exchange.markets:
+                self.load_markets_custom()
+
+            # 1. Fetch all tickers (snapshot)
+            tickers = self.exchange.fetch_tickers()
+            
+            # 2. Filter for USDT Spot pairs only
+            usdt_pairs = []
+            for symbol, ticker in tickers.items():
+                if "/USDT" in symbol and "UP/" not in symbol and "DOWN/" not in symbol:
+                     # Basic sanitization
+                     usdt_pairs.append({
+                         'symbol': symbol,
+                         'volume': ticker.get('quoteVolume', 0) or 0
+                     })
+            
+            # 3. Sort by Volume Descending
+            sorted_pairs = sorted(usdt_pairs, key=lambda x: x['volume'], reverse=True)
+            
+            # 4. Return top N symbols
+            top_symbols = [p['symbol'] for p in sorted_pairs[:limit]]
+            print(f"Spy: Found Top {len(top_symbols)} Assets by Volume: {top_symbols}")
+            return top_symbols
+        except Exception as e:
+            print(f"Spy Top Assets Error: {e}")
+            return ["BTC/USDT", "ETH/USDT"] # Fallback
+
     def calculate_indicators(self, df: pd.DataFrame):
         """
         Calculates Technical Indicators (RSI, MACD)
