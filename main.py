@@ -111,7 +111,8 @@ def run_bot_cycle():
         "signal_type": analysis.get('recommendation'), # BUY/SELL
         "entry_target": verdict.size, # Using size as entry amount for simplicity
         "status": "PENDING" if verdict.decision == "APPROVED" else "REJECTED",
-        "judge_reason": verdict.reason
+        "judge_reason": verdict.reason,
+        "is_sim": (mode == "PAPER")
     }
     signal_entry = db.table("trade_signals").insert(signal_data).execute()
     
