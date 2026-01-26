@@ -77,8 +77,12 @@ class Spy:
                          'symbol': symbol,
                          'base': base_id,
                          'quote': quote_id,
+                         'baseId': base_id,
+                         'quoteId': quote_id,
                          'active': True,
-                         'type': 'spot'
+                         'type': 'spot',
+                         'spot': True,
+                         'info': s
                      }
                      ids_map[market_id] = symbol
                  
