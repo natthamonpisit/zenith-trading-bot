@@ -140,6 +140,14 @@ def render_active_holdings(db):
                     with c2: st.markdown(f"Entry: `${entry_price:,.2f}`")
                     with c3: st.markdown(f"Duration: `{dur_str}`")
                     with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
+        else:
+            # Empty State
+            with st.container(border=True):
+                 c1, c2 = st.columns([1, 10])
+                 with c1: st.markdown("# 💤")
+                 with c2: 
+                     st.markdown("### No Assets in Progress")
+                     st.caption("The Sniper is scanning. Active positions will appear here.")
     except: pass
 
 def render_chart_section():
@@ -163,33 +171,3 @@ def render_chart_section():
             fig.update_layout(template="plotly_dark", height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
     except Exception as e: st.error(f"Chart Error: {e}")
-
-def render_live_holdings(db):
-    try:
-        open_live = db.table("positions").select("*, assets(symbol)").eq("is_open", True).eq("is_sim", False).execute()
-        if open_live.data:
-            st.markdown("#### ⚡ Assets in Progress (Live)")
-            for p in open_live.data:
-                symbol = p['assets']['symbol'] if p['assets'] else "UNKNOWN"
-                qty = float(p['quantity'])
-                entry_price = float(p['entry_avg'])
-                try: 
-                    ticker = get_spy_instance().exchange.fetch_ticker(symbol)
-                    curr_price = ticker['last']
-                except: curr_price = entry_price
-                
-                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
-                duration = datetime.now(pytz.utc) - utc_entry
-                dur_str = f"{duration.days}d {duration.seconds//3600}h {(duration.seconds//60)%60}m"
-                
-                pnl = (curr_price - entry_price) * qty
-                pnl_pct = (pnl / (entry_price * qty)) * 100 if entry_price > 0 else 0
-                color = "#00FF94" if pnl >= 0 else "#FF4B4B"
-
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
-                    with c1: st.markdown(f"**{symbol}**"); st.caption("Live")
-                    with c2: st.markdown(f"Entry: `${entry_price:,.2f}`")
-                    with c3: st.markdown(f"Duration: `{dur_str}`")
-                    with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
-    except: pass
