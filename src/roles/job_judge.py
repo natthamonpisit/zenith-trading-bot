@@ -37,7 +37,7 @@ class Judge:
             # Sanitize all values by removing literal quotes
             return {item['key']: str(item['value']).replace('"', '').strip() for item in response.data}
         except:
-            return {'RSI_THRESHOLD': 70, 'AI_CONF_THRESHOLD': 75}
+            return {'RSI_THRESHOLD': 75, 'AI_CONF_THRESHOLD': 60}
 
     def evaluate(self, ai_data, tech_data, portfolio_balance):
         """

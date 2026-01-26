@@ -11,10 +11,10 @@ def render_config_page(db):
         col1, col2 = st.columns(2)
         
         with col1:
-            current_ai = int(get_cfg(db, "AI_CONF_THRESHOLD", 75))
+            current_ai = int(get_cfg(db, "AI_CONF_THRESHOLD", 60))
             new_ai = st.slider("Min AI Confidence (%)", 0, 100, current_ai, help="Signals below this will be REJECTED.")
             
-            current_rsi = int(get_cfg(db, "RSI_THRESHOLD", 70))
+            current_rsi = int(get_cfg(db, "RSI_THRESHOLD", 75))
             new_rsi = st.slider("RSI Veto Threshold", 50, 90, current_rsi, help="Never BUY if RSI is above this level.")
 
         with col2:
