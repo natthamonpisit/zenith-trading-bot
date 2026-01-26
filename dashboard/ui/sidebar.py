@@ -51,6 +51,12 @@ def render_sidebar(db):
                 if st.button("🟢 RESUME TRADING", use_container_width=True):
                     db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
                     st.rerun()
+                    
+        with c2:
+            # Dangerous Button: Restart Server
+            if st.button("🔄", help="Force Restart Server (Kill Process)", use_container_width=True):
+                 db.table("bot_config").upsert({"key": "BOT_COMMAND", "value": "RESTART"}).execute()
+                 st.toast("♻️ Restart Command Sent! Waiting for Watchdog...", icon="💀")
         
         # Auto Refresh Toggle
         if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = True
