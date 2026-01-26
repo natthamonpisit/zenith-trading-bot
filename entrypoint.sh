@@ -25,24 +25,25 @@ fileWatcherType = 'none'
 gatherUsageStats = false
 " > .streamlit/config.toml
 
-# Run Bot in background
-echo "🤖 Starting Trading Bot..."
-python main.py &
-
-# Run Streamlit in background to check health
+# Run Streamlit in background FIRST (Priority)
+echo "🌟 Starting Streamlit Dashboard..."
 streamlit run dashboard/app.py &
 PID=$!
 
-# Wait for 5 seconds and check if port is listening
-sleep 5
-echo "🔍 Checking internal connectivity..."
-if curl -v http://0.0.0.0:$PORT > /dev/null; then
-    echo "✅ Internal Health Check Passed!"
-else
-    echo "❌ Internal Health Check FAILED. Streamlit is not listening on $PORT"
-    ps aux
-    cat /proc/$PID/fd/1 || true # Try to read stdout
-fi
+# Wait loop for Port Binding (Max 30s)
+echo "⏳ Waiting for Streamlit to bind port $PORT..."
+for i in {1..30}; do
+    if curl -s http://0.0.0.0:$PORT > /dev/null; then
+        echo "✅ Streamlit is UP and LISTENING!"
+        break
+    fi
+    sleep 1
+    echo "."
+done
 
-# Bring process to foreground
+# Start Bot in background (Delayed)
+echo "🤖 Starting Trading Bot (Lazy Start)..."
+python main.py &
+
+# Keep container alive by waiting for Streamlit
 wait $PID
