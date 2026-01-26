@@ -31,4 +31,7 @@ EXPOSE 8501
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
-CMD ["./entrypoint.sh"]
+# Use shell form to ensure variable checking works if needed, 
+# but exec form is better for signal handling. 
+# We use ENTRYPOINT to force this script to be the PID 1
+ENTRYPOINT ["/app/entrypoint.sh"]
