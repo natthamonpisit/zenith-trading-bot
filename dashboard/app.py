@@ -193,7 +193,41 @@ if st.session_state.page == 'Dashboard':
             st.plotly_chart(fig_gauge, use_container_width=True)
             st.caption("AI Market Confidence")
 
-        # 3. Market Watch
+        # 3. Portfolio / Wallet
+        with st.container(border=True):
+            st.markdown("##### 💰 Portfolio (Binance)")
+            try:
+                spy_instance = get_spy_instance()
+                # Ensure markets loaded safely
+                if not spy_instance.exchange.markets: spy_instance.load_markets_custom()
+                
+                balance = spy_instance.get_account_balance()
+                
+                if balance:
+                    # Filter for non-zero assets
+                    # 'total' key holds the total amounts
+                    total_bal = balance.get('total', {})
+                    non_zero = {k: v for k, v in total_bal.items() if v > 0}
+                    
+                    if non_zero:
+                        for asset, amount in non_zero.items():
+                             # Simple approximate value (mock price for now as fetching all tickers is heavy)
+                             st.markdown(f"""
+                             <div style='display:flex; justify-content:space-between; margin:5px 0;'>
+                                <span>**{asset}**</span>
+                                <span style='color:#00FF94;'>{amount:,.4f}</span>
+                             </div>
+                             """, unsafe_allow_html=True)
+                             # Progress bar for visual weight (mock)
+                             st.progress(min(100, int((amount * 100) % 100)) or 10) 
+                    else:
+                        st.caption("No assets found > 0")
+                else:
+                    st.warning("Failed to load balance.")
+            except Exception as e:
+                st.error(f"Wallet Error: {e}")
+
+        # 4. Market Watch
         with st.container(border=True):
             st.markdown("##### 🔭 Market Watch")
             for coin in ["BTC/USDT", "ETH/USDT", "SOL/USDT"]:

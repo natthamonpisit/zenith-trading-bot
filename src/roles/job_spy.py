@@ -115,6 +115,16 @@ class Spy:
             print(f"Spy (Data Fetch) Error: {e}")
             return None
 
+    def get_account_balance(self):
+        """Fetches account balance securely"""
+        try:
+             # Force load if valid
+             balance = self.exchange.fetch_balance()
+             return balance
+        except Exception as e:
+             print(f"Spy (Balance) Error: {e}")
+             return None
+
     def calculate_indicators(self, df: pd.DataFrame):
         """
         Calculates Technical Indicators (RSI, MACD)
