@@ -17,5 +17,5 @@ WHERE NOT EXISTS (SELECT 1 FROM simulation_portfolio WHERE id = 1);
 
 -- Add Configuration Key for Mode
 INSERT INTO bot_config (key, value) 
-VALUES ('TRADING_MODE', 'PAPER') 
+VALUES ('TRADING_MODE', '"PAPER"') 
 ON CONFLICT (key) DO NOTHING;
