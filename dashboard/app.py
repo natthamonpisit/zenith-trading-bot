@@ -117,41 +117,126 @@ with st.sidebar:
     st.caption(f"System Time: {datetime.now().strftime('%H:%M:%S')}")
     st.markdown("---")
     
-    pages = ['Dashboard', 'Simulation Mode', 'Strategy Config', 'Trade History', 'Analyze Report', 'System Status']
-    for p in pages:
-        if st.button(f"{'🔷' if st.session_state.page == p else '🔹'} {p}", key=f"nav_{p}", use_container_width=True):
-            navigate_to(p)
-            st.rerun()
-            
-    st.markdown("---")
-    st.markdown("<div style='margin-top:auto;'></div>", unsafe_allow_html=True)
-    
-    # Modern Kill Switch
-    st.markdown("#### 🚨 Emergency Control")
-    try:
-        config_res = db.table("bot_config").select("*").eq("key", "BOT_STATUS").execute()
-        current_status = config_res.data[0]['value'] if config_res.data else "ACTIVE"
-    except: current_status = "ACTIVE"
-
-    if current_status == "ACTIVE":
-        if st.button("🔴 STOP TRADING", type="primary", use_container_width=True, help="Force Halt All Operations"):
-            db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
-            st.rerun()
-    else:
-        st.error("⛔ SYSTEM HALTED")
-        if st.button("🟢 RESUME TRADING", use_container_width=True):
-            db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
-            st.rerun()
+        if st.button("💾 Save Configuration", type="primary"):
+            try:
+                db.table("bot_config").upsert({"key": "AI_CONFIDENCE_THRESHOLD", "value": str(new_ai)}).execute()
+                # TRADING_MODE is now handled in Sidebar
+                st.success("Configuration Updated Successfully!")
+            except Exception as e:
+                st.error(f"Save Failed: {e}")
 
 # --- DASHBOARD PAGE ---
 if st.session_state.page == 'Dashboard':
-    if st.button("🔄 Refresh Data"): st.rerun()
+    # --- HEADER / MODE BADGE ---
+    # Fetch Mode securely
+    try:
+        conf_mode = db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
+        current_mode = conf_mode.data[0]['value'] if conf_mode.data else "PAPER"
+        current_mode = current_mode.replace('"', '')
+    except: current_mode = "PAPER"
 
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        if current_mode == "LIVE":
+            st.markdown(f"""
+            <div style="padding: 10px; background-color: rgba(255, 0, 85, 0.2); border: 1px solid #FF0055; border-radius: 10px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">🔴</span>
+                <div>
+                    <h3 style="margin:0; color: #FF0055;">LIVE TRADING ACTIVE</h3>
+                    <p style="margin:0; font-size: 0.8em; opacity: 0.8;">Real Capital at Risk. Signals are executed on Binance.</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="padding: 10px; background-color: rgba(0, 255, 148, 0.1); border: 1px solid #00FF94; border-radius: 10px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">🎮</span>
+                <div>
+                    <h3 style="margin:0; color: #00FF94;">SIMULATION MODE</h3>
+                    <p style="margin:0; font-size: 0.8em; opacity: 0.8;">Testing strategies with paper money. No real risk.</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    with c2:
+        if st.button("🔄 Refresh Data", use_container_width=True): st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    
     main_col, right_col = st.columns([3, 1])
 
     # --- RIGHT SIDEBAR CONTENTS ---
     with right_col:
-        # 1. System Health Monitor
+        
+        # 0. MODE TOGGLE (Quick Switch)
+        with st.container(border=True):
+            st.markdown("##### 🎚️ Mode Control")
+            is_live = (current_mode == "LIVE")
+            toggle_mode = st.toggle("Enable Live Trading", value=is_live, help="Switch between Paper Trading and Real Execution")
+            
+            if toggle_mode != is_live:
+                new_val = '"LIVE"' if toggle_mode else '"PAPER"'
+                db.table("bot_config").upsert({"key": "TRADING_MODE", "value": new_val}).execute()
+                st.rerun()
+
+        # 1. Dynamic Portfolio
+        with st.container(border=True):
+            if current_mode == "PAPER":
+                st.markdown("##### 🎮 Paper Portfolio")
+                try:
+                    # Get Sim Data
+                    sim = db.table("simulation_portfolio").select("*").eq("id", 1).execute()
+                    balance = float(sim.data[0]['balance']) if sim.data else 1000.0
+                    
+                    pos = db.table("positions").select("*").eq("is_sim", True).eq("is_open", True).execute()
+                    invested = sum([float(p['entry_avg']) * float(p['quantity']) for p in pos.data]) if pos.data else 0.0
+                    total_equity = balance + invested 
+                    
+                    st.metric("Total Equity", f"${total_equity:,.2f}")
+                    c1, c2 = st.columns(2)
+                    c1.metric("Cash", f"${balance:,.2f}")
+                    c2.metric("In Trade", f"${invested:,.2f}")
+                    
+                    # Reset Button for Sim
+                    if st.button("🔄 Reset Balance", use_container_width=True):
+                        db.table("simulation_portfolio").update({"balance": 1000.0}).eq("id", 1).execute()
+                        db.table("positions").delete().eq("is_sim", True).execute() # Clear sim positions
+                        db.table("trade_signals").delete().eq("is_sim", True).execute() # Clear sim signals
+                        st.toast("Simulation Reset to $1,000", icon="✅")
+                        time.sleep(1)
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"Sim Data Error: {e}")
+
+            else:
+                # LIVE MODE UI (Same as before but simplified)
+                st.markdown("##### 💰 Real Portfolio")
+                try:
+                    spy_instance = get_spy_instance()
+                    if not spy_instance.exchange.markets: spy_instance.load_markets_custom()
+                    
+                    balance = spy_instance.get_account_balance()
+                    thb_rate = spy_instance.get_usdt_thb_rate()
+                    
+                    if balance:
+                        total_bal = balance.get('total', {})
+                        non_zero = {k: v for k, v in total_bal.items() if v > 0}
+                        total_usdt_est = 0
+                        
+                        if non_zero:
+                            for asset, amount in non_zero.items():
+                                 if asset == 'USDT': total_usdt_est += amount
+                                 st.markdown(f"**{asset}**: `{amount:,.4f}`")
+                            
+                            st.divider()
+                            est_thb = total_usdt_est * thb_rate
+                            st.metric("Est. Equity", f"{total_usdt_est:,.2f} USDT", f"≈ {est_thb:,.2f} THB")
+                        else: st.caption("Empty Wallet")
+                    else: st.warning("Connect Error")
+                except Exception as e: st.error(f"Wallet Error: {e}")
+
+        # 2. System Health Monitor
         with st.container(border=True):
             st.markdown("##### 🏥 System Health")
             
@@ -167,117 +252,11 @@ if st.session_state.page == 'Dashboard':
             st.markdown(f"""
             <div style='font-size: 0.9em;'>
                 <div style='display:flex; justify-content:space-between; margin:5px 0;'>
-                    <span>🔌 API Connection</span>
+                    <span>🔌 API Latency</span>
                     <span style='color:{'#00FF94' if latency<500 else '#FFAA00'}; font-weight:bold;'>{'🟢' if api_ok else '🔴'} {latency}ms</span>
-                </div>
-                <div style='display:flex; justify-content:space-between; margin:5px 0;'>
-                    <span>💾 Database</span>
-                    <span style='color:#00FF94; font-weight:bold;'>🟢 Steady</span>
-                </div>
-                <div style='display:flex; justify-content:space-between; margin:5px 0;'>
-                    <span>🧠 AI Engine</span>
-                    <span style='color:#00FF94; font-weight:bold;'>🟢 Ready</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-        
-        # 2. Live Signal Gauge
-        with st.container(border=True):
-            st.markdown("##### 🛰️ Market Sentiment")
-            # Mock Gauge
-            fig_gauge = go.Figure(go.Indicator(
-                mode = "gauge+number", value = 72, 
-                gauge = { 'axis': {'visible': False}, 'bar': {'color': "#00FF94"}, 'bgcolor': "#333"}
-            ))
-            fig_gauge.update_layout(height=100, margin=dict(l=10,r=10,t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', font={'color':'white'})
-            st.plotly_chart(fig_gauge, use_container_width=True)
-            st.caption("AI Market Confidence")
-
-        # 3. Dynamic Portfolio
-        with st.container(border=True):
-            # Check Mode
-            try:
-                conf_mode = db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
-                current_mode = conf_mode.data[0]['value'] if conf_mode.data else "PAPER"
-            except: current_mode = "PAPER"
-            
-            # Remove quotes if present
-            current_mode = current_mode.replace('"', '')
-
-            if current_mode == "PAPER":
-                st.markdown("##### 🎮 Paper Portfolio")
-                st.caption("Simulation Mode Active")
-                
-                try:
-                    # Get Sim Data
-                    sim = db.table("simulation_portfolio").select("*").eq("id", 1).execute()
-                    balance = float(sim.data[0]['balance']) if sim.data else 1000.0
-                    
-                    # Estimate Invested (Mock logic: Sum of Entry * Qty of Open Sim Positions)
-                    pos = db.table("positions").select("*").eq("is_sim", True).eq("is_open", True).execute()
-                    invested = sum([float(p['entry_avg']) * float(p['quantity']) for p in pos.data]) if pos.data else 0.0
-                    
-                    total_equity = balance + invested # Simplified equity
-                    
-                    st.metric("Total Equity (Sim)", f"${total_equity:,.2f}")
-                    
-                    c1, c2 = st.columns(2)
-                    c1.metric("Available Cash", f"${balance:,.2f}")
-                    c2.metric("Invested", f"${invested:,.2f}")
-                    
-                    st.progress(min(100, int((invested / total_equity)*100)) if total_equity > 0 else 0)
-                    
-                except Exception as e:
-                    st.error(f"Sim Data Error: {e}")
-
-            else:
-                # LIVE MODE
-                st.markdown("##### 💰 Real Portfolio (Binance)")
-                st.warning("⚠️ LIVE TRADING ACTIVE")
-                
-                try:
-                    spy_instance = get_spy_instance()
-                    if not spy_instance.exchange.markets: spy_instance.load_markets_custom()
-                    
-                    balance = spy_instance.get_account_balance()
-                    thb_rate = spy_instance.get_usdt_thb_rate()
-                    
-                    if balance:
-                        total_bal = balance.get('total', {})
-                        non_zero = {k: v for k, v in total_bal.items() if v > 0}
-                        
-                        # Calculate Total USDT Value approx
-                        total_usdt_est = 0
-                        
-                        if non_zero:
-                            for asset, amount in non_zero.items():
-                                 val_usdt = amount # Base assumption for USDT
-                                 if asset != 'USDT':
-                                     # Try fetch price or use mock
-                                     # For MVP, just list amounts
-                                     pass
-                                 
-                                 # Convert to THB
-                                 val_thb = amount * thb_rate if asset == 'USDT' else 0 # Simple logic for now
-                                 
-                                 st.markdown(f"""
-                                 <div style='display:flex; justify-content:space-between; margin:5px 0;'>
-                                    <span>**{asset}**</span>
-                                    <span>{amount:,.4f}</span>
-                                 </div>
-                                 """, unsafe_allow_html=True)
-                                 
-                                 if asset == 'USDT': total_usdt_est += amount
-                        
-                            st.divider()
-                            est_thb = total_usdt_est * thb_rate
-                            st.metric("Est. USDT Value", f"{total_usdt_est:,.2f} USDT", f"≈ {est_thb:,.2f} THB")
-                        else:
-                            st.caption("No assets found > 0")
-                    else:
-                        st.warning("Failed to load wallet.")
-                except Exception as e:
-                    st.error(f"Wallet Error: {e}")
 
         # 4. Market Watch
         with st.container(border=True):
