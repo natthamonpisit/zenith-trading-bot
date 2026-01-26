@@ -185,9 +185,13 @@ def start():
         
         print("Bot scheduled for 5-minute cycles.")
         
+        last_heartbeat = time.time()
         while True:
             try:
                 schedule.run_pending()
+                if time.time() - last_heartbeat > 60:
+                    print("💓 System Heartbeat: Alive")
+                    last_heartbeat = time.time()
                 time.sleep(1)
             except Exception as e:
                 log_activity("System", f"Loop Error: {e}", "ERROR")
