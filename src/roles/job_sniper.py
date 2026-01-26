@@ -48,19 +48,54 @@ class Sniper:
 
             if is_sim:
                 # -- SIMULATION MODE --
+                # Fetch real price for accurate simulation
                 ticker = self.exchange.fetch_ticker(symbol)
                 fill_price = ticker['last']
-                # Calculate Mock Fee (0.1%)
-                fee = (fill_price * fill_amount) * 0.001
                 
-                # Update Simulation Portfolio
                 # Fetch mock wallet
-                wallet = self.db.table("simulation_portfolio").select("*").eq("id", 1).execute()
-                current_bal = float(wallet.data[0]['balance'])
+                wallet_res = self.db.table("simulation_portfolio").select("*").eq("id", 1).execute()
+                if not wallet_res.data:
+                    # Initialize if missing
+                    self.db.table("simulation_portfolio").insert({"id": 1, "balance": 1000.0}).execute()
+                    current_bal = 1000.0
+                else:
+                    current_bal = float(wallet_res.data[0]['balance'])
                 
-                # Logic: If BUY -> Deduct Balance, If SELL -> Add Balance (Simple logic)
-                # Ideally we track Asset holdings too, but for V1 let's just track USD PnL roughly
-                pass 
+                if side.upper() == 'BUY':
+                    # 'amount' is in USDT (from Judge)
+                    cost = amount 
+                    if current_bal < cost:
+                        raise Exception(f"Insufficient Simulation Balance: {current_bal:,.2f} < {cost:,.2f} USDT")
+                    
+                    new_bal = current_bal - cost
+                    self.db.table("simulation_portfolio").update({"balance": new_bal}).eq("id", 1).execute()
+                    
+                    fill_amount = cost / fill_price # Qty in asset
+                    print(f"Sniper (Sim): BUY {fill_amount:.6f} {symbol} at ${fill_price:,.2f}")
+                
+                elif side.upper() == 'SELL':
+                    # Find any open simulation position for this asset to close
+                    pos_res = self.db.table("positions").select("*")\
+                        .eq("asset_id", signal['asset_id'])\
+                        .eq("is_open", True)\
+                        .eq("is_sim", True)\
+                        .order("created_at", desc=True).limit(1).execute()
+                    
+                    if pos_res.data:
+                        pos = pos_res.data[0]
+                        qty = float(pos['quantity'])
+                        revenue = qty * fill_price
+                        
+                        new_bal = current_bal + revenue
+                        self.db.table("simulation_portfolio").update({"balance": new_bal}).eq("id", 1).execute()
+                        
+                        # Close the existing position
+                        self.db.table("positions").update({"is_open": False}).eq("id", pos['id']).execute()
+                        
+                        fill_amount = qty
+                        print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Revenue: ${revenue:,.2f}")
+                    else:
+                        raise Exception(f"No open simulation position found for {symbol} to sell.")
                 
             else:
                 # -- LIVE MODE --
@@ -74,7 +109,6 @@ class Sniper:
                     })
                 else:
                     # For SELL: 'amount' is in base currency (like 0.001 BTC)
-                    # Note: We might need to fetch current balance to know how much to sell if 'amount' is USD
                     print(f"Sniper: Placing Market SELL for {amount} qty...")
                     order = self.exchange.create_order(symbol, 'market', 'sell', amount, None, {
                         'type': 'spot'
@@ -84,13 +118,16 @@ class Sniper:
                 fill_amount = order.get('amount', amount)
                 print(f"Sniper: Order Placed! ID: {order['id']}")
             
-            # 2. Record Position in DB
+            # 2. Record Position / History in DB
+            # For BUY, we ALWAYS create a new open position
+            # For SELL (Sim), we already closed the position above, but we might want to record the "Sell" action too.
+            # To keep history simple, let's insert the action normally.
             self.db.table("positions").insert({
                "asset_id": signal['asset_id'],
                "side": side,
                "entry_avg": fill_price,
                "quantity": fill_amount,
-               "is_open": True,
+               "is_open": True if side.upper() == 'BUY' else False,
                "is_sim": is_sim
             }).execute()
             
@@ -102,3 +139,4 @@ class Sniper:
             print(f"Sniper Error: {e}")
             self.db.table("trade_signals").update({"status": "FAILED", "judge_reason": str(e)}).eq("id", signal['id']).execute()
             return False
+

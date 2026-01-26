@@ -562,26 +562,51 @@ elif st.session_state.page == 'Simulation Mode':
         sim_wallet = db.table("simulation_portfolio").select("*").eq("id", 1).execute()
         balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
         
+        # Calculate Unrealized PnL from Open Sim Positions
+        unrealized_pnl = 0.0
+        try:
+            open_pos = db.table("positions").select("*, assets(symbol)").eq("is_open", True).eq("is_sim", True).execute()
+            if open_pos.data:
+                for p in open_pos.data:
+                    # Fetch current price
+                    ticker = Spy().exchange.fetch_ticker(p['assets']['symbol'])
+                    curr_price = ticker['last']
+                    entry_price = float(p['entry_avg'])
+                    qty = float(p['quantity'])
+                    unrealized_pnl += (curr_price - entry_price) * qty
+        except: pass
+
         c1, c2, c3 = st.columns(3)
         c1.metric("Mock Balance", f"${balance:,.2f}")
-        c2.metric("Unrealized PnL", "$0.00", "0%")
-        c3.metric("Win Rate", "N/A")
+        c2.metric("Unrealized PnL", f"${unrealized_pnl:,.2f}", f"{(unrealized_pnl/1000)*100:.2f}%" if balance > 0 else "0%")
+        c3.metric("Total Equity", f"${(balance + unrealized_pnl):,.2f}")
         
+        st.divider()
+        st.subheader("📊 Portfolio Holdings (Sim)")
+        if open_pos.data:
+             df_pos = pd.DataFrame(open_pos.data)
+             df_pos['symbol'] = df_pos['assets'].apply(lambda x: x['symbol'] if x else '??')
+             df_pos['value'] = df_pos['quantity'].astype(float) * df_pos['entry_avg'].astype(float) # Mock value at entry
+             st.dataframe(df_pos[['symbol', 'side', 'quantity', 'entry_avg', 'created_at']], use_container_width=True)
+        else:
+             st.info("No open positions in simulation.")
+
         st.divider()
         st.subheader("📜 Paper Trade History")
         
-        # Fetch Sim Signals
-        sim_signals = db.table("trade_signals").select("*, assets(symbol)").eq("is_sim", True).order("created_at", desc=True).execute()
+        # Fetch Sim Executed Signals
+        sim_signals = db.table("trade_signals").select("*, assets(symbol)").eq("is_sim", True).eq("status", "EXECUTED").order("created_at", desc=True).execute()
         
         if sim_signals.data:
             df_sim = pd.DataFrame(sim_signals.data)
             df_sim['symbol'] = df_sim['assets'].apply(lambda x: x['symbol'] if x else 'UNKNOWN')
-            st.dataframe(df_sim[['created_at', 'symbol', 'signal_type', 'entry_target', 'status']])
+            st.dataframe(df_sim[['created_at', 'symbol', 'signal_type', 'entry_target', 'status']], use_container_width=True)
         else:
              st.info("No paper trades yet. Waiting for signals...")
              
     except Exception as e:
         st.error(f"Sim Error: {e}")
+
 
 elif st.session_state.page == 'System Status':
     st.markdown("### 🖥️ System Internals")
