@@ -199,7 +199,8 @@ if st.session_state.page == 'Dashboard':
                      st.markdown(f"<code style='color:#666'>{ts}</code> **{log['role']}**: <span style='color:{color}'>{log['message']}</span>", unsafe_allow_html=True)
              else:
                  st.info("Waiting for bot activity...")
-        except: st.caption("Log connection pending...")
+        except Exception as e: 
+             st.caption(f"Log Error: {e}")
 
     main_col, right_col = st.columns([3, 1])
 
@@ -310,9 +311,9 @@ if st.session_state.page == 'Dashboard':
                          color = "#00FF94" if pct >= 0 else "#FF0055"
                          
                          st.markdown(f"**{coin}** <span style='float:right; color:{color}'>${price:,.2f}</span>", unsafe_allow_html=True)
-                     except:
-                         st.markdown(f"**{coin}** <span style='float:right; color:#666'>Err</span>", unsafe_allow_html=True)
-            except: pass
+                     except Exception as e:
+                         st.markdown(f"**{coin}** <span style='float:right; color:#666; font-size:0.8em'>Err: {str(e)[:15]}..</span>", unsafe_allow_html=True)
+            except Exception as e: st.error(f"MW Error: {e}")
 
     # --- MAIN CONTENTS ---
     with main_col:
