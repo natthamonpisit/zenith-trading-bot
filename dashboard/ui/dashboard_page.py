@@ -140,6 +140,7 @@ def render_active_holdings(db):
                     with c2: st.markdown(f"Entry: `${entry_price:,.2f}`")
                     with c3: st.markdown(f"Duration: `{dur_str}`")
                     with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
+    except: pass
 
 def render_chart_section():
     try:
