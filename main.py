@@ -208,6 +208,13 @@ def start():
         # Init heartbeat
         last_heartbeat = time.time()
         
+        # --- IMMEDIATE FEEDBACK FOR USER ---
+        # Write "I am Alive" signal to DB immediately so Dashboard turns GREEN
+        try:
+             db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": str(time.time())}).execute()
+             print("💓 Heartbeat Initialized in DB")
+        except: pass
+        
         # Run once immediately
         run_bot_cycle()
         
