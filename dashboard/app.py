@@ -13,6 +13,7 @@ from dashboard.ui.history_page import render_history_page
 from dashboard.ui.simulation_page import render_simulation_page
 from dashboard.ui.status_page import render_status_page
 from dashboard.ui.analysis_page import render_analysis_page
+from dashboard.ui.fundamental_page import render_fundamental_page
 
 # --- CONFIG ---
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")

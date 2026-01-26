@@ -47,7 +47,38 @@ def render_config_page(db):
             macd_val = get_cfg(db, "ENABLE_MACD_MOMENTUM", "false").replace('"', '').lower() == 'true'
             new_macd = st.checkbox("✅ Momentum Veto (Bullish MACD)", value=macd_val, help="Reject BUY if MACD < Signal Line.")
 
+        # --- 3. Head Hunter (Fundamental) Config ---
+        st.subheader("🕵️ Head Hunter Settings")
+        
+        # A. Trading Universe
+        current_universe = get_cfg(db, "TRADING_UNIVERSE", "ALL").replace('"', '')
+        new_universe = st.selectbox(
+            "Trading Universe Mode",
+            ["ALL", "SAFE_LIST", "TOP_30"],
+            index=["ALL", "SAFE_LIST", "TOP_30"].index(current_universe) if current_universe in ["ALL", "SAFE_LIST", "TOP_30"] else 0,
+            help="SAFE_LIST: Only trade symbols in your Whitelist. ALL: Trade anything passing filters."
+        )
+        
+        # B. Min Volume
+        current_vol = float(get_cfg(db, "MIN_VOLUME", 10000000))
+        new_vol = st.number_input(
+            "Min 24h Volume (USDT)",
+            min_value=0.0,
+            value=current_vol,
+            step=1000000.0,
+            format="%f"
+        )
+        
+        if st.button("Save Fundamental Config"):
+            db.table("bot_config").upsert({"key": "TRADING_UNIVERSE", "value": new_universe}).execute()
+            db.table("bot_config").upsert({"key": "MIN_VOLUME", "value": str(new_vol)}).execute()
+            st.success("Saved!")
+            st.rerun()
+
         st.markdown("---")
+
+        # --- 4. Judge Config ---
+        st.subheader("⚖️ Judge Protocols")
         if st.button("💾 Save Configuration", type="primary", use_container_width=True):
             try:
                 configs = [

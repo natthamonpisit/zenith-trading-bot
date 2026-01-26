@@ -24,7 +24,8 @@ class PriceSpy:
             'fetchPositions': False,   
             'adjustForTimeDifference': True,
             'recvWindow': 10000,
-            'warnOnFetchMarginPairs': False, # Disable internal warnings/fetches
+            'warnOnFetchMarginPairs': False,
+            'timeout': 10000, # 10 seconds timeout (Critical for preventing hangs)
         } 
         
         # Override for Binance TH specific behavior

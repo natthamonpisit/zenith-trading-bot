@@ -14,7 +14,7 @@ from src.roles.job_executor import SniperExecutor
 
 # Initialize Team
 db = get_db()
-head_hunter = HeadHunter()
+head_hunter = HeadHunter(db) # Pass DB for Config/Fundamental Data
 price_spy = PriceSpy()
 news_spy = NewsSpy()
 radar = Radar(price_spy) # Radar uses PriceSpy
@@ -131,49 +131,51 @@ def process_pair(pair, timeframe):
         print(f"Error processing {pair}: {e}")
 
 def run_bot_cycle():
-    print("\n--- 🔄 Multi-Role Cycle Start ---")
+    """
+    Main Orchestrator:
+    1. Radar/Attributes: Find Candidates
+    2. Head Hunter: Screen Candidates (Fundamentally)
+    3. Spy: Gather Data
+    4. Strategist+Judge: Analyze & Verify
+    5. Sniper: Execute
+    """
+    # CRITICAL: Pulse Heartbeat at start of cycle
+    global last_heartbeat
+    last_heartbeat = time.time()
     
-    # Reload Judge Config
-    judge.reload_config()
+    print("\n🔄 --- NEW CYCLE START ---")
+    log_activity("System", "Cycle Started", "INFO")
     
-    # 1. CHECK KILL SWITCH
-    try:
-        config = db.table("bot_config").select("*").eq("key", "BOT_STATUS").execute()
-        status = str(config.data[0]['value']).replace('"', '').strip() if config.data else "ACTIVE"
-        if status == "STOPPED":
-             print("⛔ Bot is STOPPED.")
-             log_activity("System", "⛔ Bot is STOPPED via Dashboard.", "WARNING")
-             return
-    except: pass
-
-    # 1. HEAD HUNTER: Fundamental Screen (Weekly/Daily)
-    # For now, we just log its pulse
-    log_activity("HeadHunter", "📋 Screening market fundamentals (ROE/PEG)...")
-    head_hunter.screen_market() 
-
-    # 2. RADAR: Scan Market
-    log_activity("Radar", "📡 Scanning 24h Top Gainers & Volume...")
-    targets = radar.scan_market() 
-    if not targets:
-        targets = ["BTC/USDT", "ETH/USDT"]
-
-    print(f"🎯 Targets by Radar: {targets}")
-    
-    # 3. SPY (Info): Check News
-    # news = news_spy.fetch_latest_news()
-    
-    # Fetch Dynamic Timeframe
+    # 0. Load Config (Timeframe)
     try:
         tf_cfg = db.table("bot_config").select("value").eq("key", "TIMEFRAME").execute()
         timeframe = str(tf_cfg.data[0]['value']).replace('"', '').strip() if tf_cfg.data else "1h"
     except: timeframe = "1h"
-    
     print(f"⏳ Using Timeframe: {timeframe}")
 
-    # Process each target
-    for pair in targets:
-        process_pair(pair, timeframe)
-        time.sleep(2) # Be nice to API
+    # 1. Radar: Find Candidates (Based on Volume/Gainers)
+    log_activity("Radar", "📡 Scanning 24h Top Gainers & Volume...")
+    candidates_raw = radar.scan_market() # Returns list of dicts with 'symbol', 'volume'
+    
+    # Pulse again after scanning (heavy operation)
+    last_heartbeat = time.time()
+
+    # 2. Head Hunter: Filter Candidates (Fundamental/Liquidity Check)
+    log_activity("HeadHunter", "📋 Screening market fundamentals (ROE/PEG)...")
+    candidates = head_hunter.screen_market(candidates_raw)
+    
+    if not candidates:
+        print("😴 No qualified candidates found.")
+        return
+
+    # 3. Process Each Candidate
+    for coin in candidates:
+        # Pulse Heartbeat BEFORE every coin process to prevent timeout during long lists
+        last_heartbeat = time.time()
+        
+        process_pair(coin['symbol'], timeframe)
+        # Sleep is fine now because we updated heartbeat
+        time.sleep(2) 
 
 def start_watchdog():
     """Monitors system heartbeat and kills process if stuck"""
@@ -203,6 +205,9 @@ def start():
         wd = threading.Thread(target=start_watchdog, daemon=True)
         wd.start()
 
+        # Init heartbeat
+        last_heartbeat = time.time()
+        
         # Run once immediately
         run_bot_cycle()
         
@@ -211,13 +216,10 @@ def start():
         
         print("Bot scheduled for 5-minute cycles.")
         
-        last_heartbeat = time.time()
         while True:
             try:
+                # Pulse check logic is now distributed inside the heavy tasks
                 schedule.run_pending()
-                if time.time() - last_heartbeat > 60:
-                    print("💓 System Heartbeat: Alive")
-                    last_heartbeat = time.time()
                 time.sleep(1)
             except Exception as e:
                 log_activity("System", f"Loop Error: {e}", "ERROR")
