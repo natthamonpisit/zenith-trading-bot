@@ -139,31 +139,49 @@ class PriceSpy:
              return None
 
     def get_top_symbols(self, limit=10):
-        """Fetches top USDT pairs by 24h Volume"""
+        """Fetches top USDT pairs by 24h Volume (Robust Loop for Binance TH)"""
         try:
             if not self.exchange.markets:
                 self.load_markets_custom()
 
-            # 1. Fetch all tickers (snapshot)
-            tickers = self.exchange.fetch_tickers()
+            # Candidate List (Top 30 Popular Coins on Binance TH)
+            candidates = [
+                "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
+                "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
+                "LTC/USDT", "TRX/USDT", "AVAX/USDT", "ONE/USDT", "FTM/USDT",
+                "SAND/USDT", "GALA/USDT", "NEAR/USDT", "ATOM/USDT", "XLM/USDT",
+                "OP/USDT", "ARB/USDT", "APE/USDT", "JASMY/USDT", "KUB/USDT"
+            ]
             
-            # 2. Filter for USDT Spot pairs only
-            usdt_pairs = []
-            for symbol, ticker in tickers.items():
-                if "/USDT" in symbol and "UP/" not in symbol and "DOWN/" not in symbol:
-                     # Basic sanitization
-                     usdt_pairs.append({
-                         'symbol': symbol,
-                         'volume': ticker.get('quoteVolume', 0) or 0
-                     })
+            valid_pairs = []
+            import requests
+
+            print(f"Spy: Scanning {len(candidates)} candidates for Top Volume...")
             
-            # 3. Sort by Volume Descending
-            sorted_pairs = sorted(usdt_pairs, key=lambda x: x['volume'], reverse=True)
+            for symbol in candidates:
+                try:
+                    # Symbol format for API: BTC/USDT -> BTCUSDT
+                    api_symbol = symbol.replace("/", "")
+                    url = f"https://api.binance.th/api/v1/ticker/24hr?symbol={api_symbol}"
+                    res = requests.get(url, timeout=2).json()
+                    
+                    if 'quoteVolume' in res:
+                        valid_pairs.append({
+                            'symbol': symbol,
+                            'volume': float(res['quoteVolume'])
+                        })
+                except: continue
             
-            # 4. Return top N symbols
-            top_symbols = [p['symbol'] for p in sorted_pairs[:limit]]
-            print(f"Spy: Found Top {len(top_symbols)} Assets by Volume: {top_symbols}")
-            return top_symbols
+            # Sort and Return Top N
+            if valid_pairs:
+                sorted_pairs = sorted(valid_pairs, key=lambda x: x['volume'], reverse=True)
+                top_symbols = [p['symbol'] for p in sorted_pairs[:limit]]
+                print(f"Spy: Found Top {len(top_symbols)} Assets: {top_symbols}")
+                return top_symbols
+            else:
+                 # Ultimate Fallback
+                 return ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+
         except Exception as e:
             print(f"Spy Top Assets Error: {e}")
             return ["BTC/USDT", "ETH/USDT"] # Fallback
