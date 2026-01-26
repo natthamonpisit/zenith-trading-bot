@@ -37,7 +37,8 @@ def run_bot_cycle():
     # 1. CHECK KILL SWITCH
     try:
         config = db.table("bot_config").select("*").eq("key", "BOT_STATUS").execute()
-        if config.data and config.data[0]['value'] == "STOPPED":
+        status = str(config.data[0]['value']).replace('"', '').strip() if config.data else "ACTIVE"
+        if status == "STOPPED":
              print("⛔ Bot is STOPPED.")
              log_activity("System", "⛔ Bot is STOPPED via Dashboard.", "WARNING")
              return
@@ -78,14 +79,31 @@ def run_bot_cycle():
     print("3. Judge Evaluate...")
     log_activity("Judge", "⚖️ Evaluating Risk Protocols...")
     
+    # FETCH REAL BALANCE based on Mode
+    try:
+        mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
+        mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
+    except: mode = "PAPER"
+
+    if mode == "PAPER":
+        try:
+            sim_wallet = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
+            balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
+        except: balance = 1000.0
+    else:
+        try:
+            # LIVE Mode: Fetch real USDT balance from Binance TH
+            bal_data = spy.get_account_balance()
+            balance = bal_data['total'].get('USDT', 0.0) if bal_data else 0.0
+        except: balance = 0.0
+    
     # Convert AI output to needed format
     ai_data = {'confidence': analysis.get('confidence'), 'recommendation': analysis.get('recommendation')}
     tech_data = {'rsi': df['rsi'].iloc[-1]} # Current RSI
-    balance = 1000 # Mock balance for now, or fetch from spy.exchange.fetch_balance()
     
     verdict = judge.evaluate(ai_data, tech_data, balance)
-    print(f"   - Judge Verdict: {verdict.decision}")
-    log_activity("Judge", f"Verdict: {verdict.decision} ({verdict.reason})")
+    print(f"   - Judge Verdict: {verdict.decision} (Bal: ${balance:,.2f})")
+    log_activity("Judge", f"Verdict: {verdict.decision} | Bal: ${balance:,.2f} ({verdict.reason})")
     
     # Log Signal to DB
     signal_data = {

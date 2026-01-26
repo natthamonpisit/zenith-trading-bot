@@ -33,6 +33,8 @@ class Sniper:
             try:
                 conf = self.db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
                 mode = conf.data[0]['value'] if conf.data else "PAPER"
+                # CRITICAL: Strip literal quotes if present (Supabase JSON/String quirk)
+                mode = str(mode).replace('"', '').strip()
             except: mode = "PAPER"
 
             is_sim = (mode == 'PAPER')

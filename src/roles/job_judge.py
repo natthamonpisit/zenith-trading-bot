@@ -21,7 +21,8 @@ class Judge:
         try:
             if self.db:
                 response = self.db.table("bot_config").select("*").execute()
-                self.config = {item['key']: item['value'] for item in response.data}
+                # Sanitize all values by removing literal quotes
+                self.config = {item['key']: str(item['value']).replace('"', '').strip() for item in response.data}
                 print(f"[Judge] Configuration reloaded.")
         except Exception as e:
             print(f"[Judge] Failed to reload config: {e}")
@@ -33,7 +34,8 @@ class Judge:
                 return {'RSI_THRESHOLD': 70, 'AI_CONF_THRESHOLD': 75, 'MAX_RISK_PER_TRADE': 2.0}
             
             response = self.db.table("bot_config").select("*").execute()
-            return {item['key']: item['value'] for item in response.data}
+            # Sanitize all values by removing literal quotes
+            return {item['key']: str(item['value']).replace('"', '').strip() for item in response.data}
         except:
             return {'RSI_THRESHOLD': 70, 'AI_CONF_THRESHOLD': 75}
 
