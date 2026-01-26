@@ -540,7 +540,16 @@ elif st.session_state.page == 'Trade History':
                  df_hist = pd.DataFrame(history.data)
                  # Clean up Asset Symbol
                  df_hist['symbol'] = df_hist['assets'].apply(lambda x: x['symbol'] if x else 'UNKNOWN')
-                 df_hist = df_hist[['created_at', 'symbol', 'signal_type', 'entry_target', 'status', 'judge_reason']]
+                 
+                 # Time Conversion to Bangkok
+                 def to_local_time(utc_str):
+                     try:
+                         utc_time = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+                         return utc_time.astimezone(pytz.timezone('Asia/Bangkok')).strftime('%Y-%m-%d %H:%M')
+                     except: return utc_str
+                 
+                 df_hist['time_th'] = df_hist['created_at'].apply(to_local_time)
+                 df_hist = df_hist[['time_th', 'symbol', 'signal_type', 'entry_target', 'status', 'judge_reason']]
                  
                  # Colorize Status
                  def color_status(val):
@@ -582,14 +591,49 @@ elif st.session_state.page == 'Simulation Mode':
         c3.metric("Total Equity", f"${(balance + unrealized_pnl):,.2f}")
         
         st.divider()
-        st.subheader("📊 Portfolio Holdings (Sim)")
+        st.subheader("🚀 Assets in Progress (Sim)")
         if open_pos.data:
-             df_pos = pd.DataFrame(open_pos.data)
-             df_pos['symbol'] = df_pos['assets'].apply(lambda x: x['symbol'] if x else '??')
-             df_pos['value'] = df_pos['quantity'].astype(float) * df_pos['entry_avg'].astype(float) # Mock value at entry
-             st.dataframe(df_pos[['symbol', 'side', 'quantity', 'entry_avg', 'created_at']], use_container_width=True)
+            # Multi-card layout for active assets
+            for p in open_pos.data:
+                symbol = p['assets']['symbol'] if p['assets'] else "UNKNOWN"
+                qty = float(p['quantity'])
+                entry_price = float(p['entry_avg'])
+                
+                # Market Price
+                try: ticker = Spy().exchange.fetch_ticker(symbol); curr_price = ticker['last']
+                except: curr_price = entry_price
+                
+                # Time & Duration
+                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                local_entry = utc_entry.astimezone(pytz.timezone('Asia/Bangkok'))
+                duration = datetime.now(pytz.utc) - utc_entry
+                
+                # Formatting duration
+                days = duration.days
+                hours, remainder = divmod(duration.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                dur_str = f"{days}d {hours}h {minutes}m" if days > 0 else f"{hours}h {minutes}m"
+                
+                # PnL logic
+                pnl = (curr_price - entry_price) * qty
+                pnl_pct = (pnl / (entry_price * qty)) * 100 if entry_price > 0 else 0
+                color = "#00FF94" if pnl >= 0 else "#FF4B4B"
+
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+                    with c1:
+                        st.markdown(f"#### {symbol}")
+                        st.caption(f"Side: **{p['side']}**")
+                    with c2:
+                        st.markdown(f"**Entry Price**\n`${entry_price:,.2f}`")
+                    with c3:
+                        st.markdown(f"**Hold Duration**\n`{dur_str}`")
+                    with c4:
+                        st.markdown(f"<p style='margin-bottom:0; font-size: 0.8em; color: #888;'>Live PnL</p><h3 style='margin-top:0; color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
+                    
+                    st.markdown(f"<p style='font-size: 0.7em; color: #555;'>Entered at: {local_entry.strftime('%Y-%m-%d %H:%M:%S')} (BKKT)</p>", unsafe_allow_html=True)
         else:
-             st.info("No open positions in simulation.")
+             st.info("No open positions in simulation. The Sniper is standing by...")
 
         st.divider()
         st.subheader("📜 Paper Trade History")
