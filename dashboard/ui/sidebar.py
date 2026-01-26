@@ -10,6 +10,21 @@ def render_sidebar(db):
         system_time = datetime.datetime.now(tz_th).strftime('%H:%M:%S')
         st.caption(f"System Time (TH): {system_time}")
         
+        # System Heartbeat Check
+        try:
+            hb_data = db.table("bot_config").select("value").eq("key", "LAST_HEARTBEAT").execute()
+            if hb_data.data:
+                last_hb = float(hb_data.data[0]['value'])
+                diff = time.time() - last_hb
+                if diff < 120:
+                    st.success(f"💓 System Online")
+                else:
+                    st.error(f"💀 Offline ({int(diff/60)}m ago)")
+            else:
+                st.warning("⚠️ No Heartbeat Signal")
+        except:
+            st.caption("Connecting...")
+        
         st.markdown("---")
         
         # Navigation

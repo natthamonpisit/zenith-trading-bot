@@ -1,0 +1,2 @@
+ALTER TABLE positions 
+ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();

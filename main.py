@@ -187,6 +187,12 @@ def start_watchdog():
             print(f"💀 {msg}")
             log_activity("System", msg, "ERROR")
             os._exit(1) # Force Kill
+        
+        # Save Heartbeat to DB for Dashboard Visibility
+        try:
+            db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": str(time.time())}).execute()
+        except Exception as e:
+            print(f"Heartbeat DB Error: {e}")
 
 def start():
     global last_heartbeat
