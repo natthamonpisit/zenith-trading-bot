@@ -99,8 +99,8 @@ def render_role_cards(db):
     
     # 1. Fetch latest logs to find status for each role
     try:
-        # Fetch enough recent logs to likely cover all roles
-        logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(50).execute()
+        # Fetch enough recent logs to likely cover all roles (increased to 200 to cover full cycle)
+        logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(200).execute()
         
         roles = {
             "HeadHunter": {"icon": "📋", "desc": "Screener"},
