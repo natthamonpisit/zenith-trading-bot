@@ -25,13 +25,16 @@ def render_config_page(db):
             new_risk = st.number_input("Max Risk Per Trade (%)", 0.1, 10.0, current_risk, step=0.1)
 
         st.markdown("#### ⚖️ Flow Controls")
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
             current_max_pos = int(get_cfg(db, "MAX_OPEN_POSITIONS", 5))
             new_max_pos = st.number_input("Max Open Positions", 1, 20, current_max_pos)
         with c2:
             curr_mode = get_cfg(db, "TRADING_MODE", "PAPER").replace('"', '')
             new_mode = st.radio("Select Mode", ["PAPER", "LIVE"], index=0 if curr_mode=="PAPER" else 1, horizontal=True)
+        with c3:
+            curr_tf = get_cfg(db, "TIMEFRAME", "1h").replace('"', '')
+            new_tf = st.selectbox("Trading Timeframe", ["5m", "15m", "30m", "1h", "4h", "1d"], index=["5m", "15m", "30m", "1h", "4h", "1d"].index(curr_tf) if curr_tf in ["5m", "15m", "30m", "1h", "4h", "1d"] else 3)
 
         st.markdown("#### 📜 Judge Checkbox Protocols")
         cb1, cb2 = st.columns(2)
@@ -54,6 +57,7 @@ def render_config_page(db):
                     {"key": "MAX_RISK_PER_TRADE", "value": str(new_risk)},
                     {"key": "MAX_OPEN_POSITIONS", "value": str(new_max_pos)},
                     {"key": "TRADING_MODE", "value": f'"{new_mode}"'},
+                    {"key": "TIMEFRAME", "value": f'"{new_tf}"'},
                     {"key": "ENABLE_EMA_TREND", "value": f'"{str(new_trend).lower()}"'},
                     {"key": "ENABLE_MACD_MOMENTUM", "value": f'"{str(new_macd).lower()}"'}
                 ]

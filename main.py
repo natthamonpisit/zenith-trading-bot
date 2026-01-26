@@ -33,13 +33,13 @@ def log_activity(role, message, level="INFO"):
     except Exception as e:
         print(f"Log Error: {e}")
 
-def process_pair(pair):
+def process_pair(pair, timeframe):
     """Encapsulated logic for a single trading pair"""
     try:
         # 1. SPY A (Price)
-        print(f"--- 1. SPY A: Fetching Price for {pair} ---")
-        log_activity("Spy", f"🕵️ Scanning {pair} market...")
-        df = price_spy.fetch_ohlcv(pair, TIMEFRAME)
+        print(f"--- 1. SPY A: Fetching Price for {pair} ({timeframe}) ---")
+        log_activity("Spy", f"🕵️ Scanning {pair} ({timeframe}) market...")
+        df = price_spy.fetch_ohlcv(pair, timeframe)
         if df is None: 
             print(f"❌ Data Fetch Failed for {pair}")
             return
@@ -160,9 +160,17 @@ def run_bot_cycle():
     # 3. SPY (Info): Check News
     # news = news_spy.fetch_latest_news()
     
+    # Fetch Dynamic Timeframe
+    try:
+        tf_cfg = db.table("bot_config").select("value").eq("key", "TIMEFRAME").execute()
+        timeframe = str(tf_cfg.data[0]['value']).replace('"', '').strip() if tf_cfg.data else "1h"
+    except: timeframe = "1h"
+    
+    print(f"⏳ Using Timeframe: {timeframe}")
+
     # Process each target
     for pair in targets:
-        process_pair(pair)
+        process_pair(pair, timeframe)
         time.sleep(2) # Be nice to API
 
 def start():
