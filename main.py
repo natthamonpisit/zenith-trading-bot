@@ -98,18 +98,28 @@ def run_bot_cycle():
              log_activity("Sniper", "❌ Order Execution Failed", "ERROR")
 
 def start():
-    log_activity("System", "🚀 Zenith Bot Started (Binance TH Edition)")
-    print(f"Target: {TRADING_PAIR}")
-    
-    # Run once immediately
-    run_bot_cycle()
-    
-    # Schedule
-    schedule.every(20).seconds.do(run_bot_cycle) # Slower loop to avoid spam
-    
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+    try:
+        log_activity("System", "🚀 Zenith Bot Started (Binance TH Edition)", "SUCCESS")
+        print(f"Target: {TRADING_PAIR}")
+        
+        # Run once immediately
+        run_bot_cycle()
+        
+        # Schedule
+        schedule.every(20).seconds.do(run_bot_cycle) # Slower loop to avoid spam
+        
+        while True:
+            try:
+                schedule.run_pending()
+                time.sleep(1)
+            except Exception as e:
+                log_activity("System", f"Loop Error: {e}", "ERROR")
+                time.sleep(5)
+    except Exception as e:
+        # Emergency Log
+        try:
+             db.table("system_logs").insert({"role": "System", "message": f"CRITICAL CRASH: {e}", "level": "ERROR"}).execute()
+        except: print(f"Fatal: {e}")
 
 if __name__ == "__main__":
     start()

@@ -143,11 +143,44 @@ with st.sidebar:
         if st.button("🔴 STOP TRADING", type="primary", use_container_width=True, help="Force Halt All Operations"):
             db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
             st.rerun()
+
     else:
         st.error("⛔ SYSTEM HALTED")
         if st.button("🟢 RESUME TRADING", use_container_width=True):
             db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
             st.rerun()
+
+    # Debug Console
+    st.markdown("---")
+    st.markdown("#### 📟 System Console")
+    try:
+        # Fetch last 15 logs for sidebar
+        console_logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(15).execute()
+        
+        # Use a container with fixed height for scrolling effect (Streamlit 1.30+)
+        with st.container(height=250):
+            if console_logs.data:
+                for log in console_logs.data:
+                    # Simple Time Parsing
+                    try:
+                        ts = log['created_at'].split("T")[1].split(".")[0]
+                    except: ts = "--:--"
+                    
+                    # Color Coding
+                    c_map = {"ERROR": "#FF4B4B", "WARNING": "#FFA726", "SUCCESS": "#00FF94", "INFO": "#B0BEC5"}
+                    color = c_map.get(log.get('level', 'INFO'), "#B0BEC5")
+                    
+                    st.markdown(f"""
+                    <div style="font-family: 'Consolas', 'Courier New', monospace; font-size: 10px; line-height: 1.2; margin-bottom: 8px; border-left: 2px solid {color}; padding-left: 5px;">
+                        <span style="color: #666;">{ts}</span> <b style="color: #EEE;">{log.get('role', '?')}</b><br>
+                        <span style="color: {color}; word-wrap: break-word;">{log.get('message', '')}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.caption("No logs available")
+    except Exception as e:
+        st.caption(f"Console Disconnected")
+
 
 # --- DASHBOARD PAGE ---
 if st.session_state.page == 'Dashboard':
