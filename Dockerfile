@@ -29,7 +29,7 @@ EXPOSE 8501
 # CRITICAL: Run ONLY Streamlit first with aggressive cloud settings
 # Direct simple command - no scripts
 # Force cache bust for this build
-ENV CACHE_BUST=20260126_3
+ENV CACHE_BUST=20260126_4
 ENV PYTHONUNBUFFERED=1
 
 # Copy run script
