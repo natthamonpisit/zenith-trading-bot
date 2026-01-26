@@ -33,6 +33,17 @@ def render_config_page(db):
             curr_mode = get_cfg(db, "TRADING_MODE", "PAPER").replace('"', '')
             new_mode = st.radio("Select Mode", ["PAPER", "LIVE"], index=0 if curr_mode=="PAPER" else 1, horizontal=True)
 
+        st.markdown("#### 📜 Judge Checkbox Protocols")
+        cb1, cb2 = st.columns(2)
+        with cb1:
+            # Trend Check (EMA)
+            trend_val = get_cfg(db, "ENABLE_EMA_TREND", "false").replace('"', '').lower() == 'true'
+            new_trend = st.checkbox("✅ Trend Veto (Price > EMA50)", value=trend_val, help="Reject BUY if price is below EMA 50 (Downtrend).")
+        with cb2:
+            # Momentum Check (MACD)
+            macd_val = get_cfg(db, "ENABLE_MACD_MOMENTUM", "false").replace('"', '').lower() == 'true'
+            new_macd = st.checkbox("✅ Momentum Veto (Bullish MACD)", value=macd_val, help="Reject BUY if MACD < Signal Line.")
+
         st.markdown("---")
         if st.button("💾 Save Configuration", type="primary", use_container_width=True):
             try:
@@ -42,7 +53,9 @@ def render_config_page(db):
                     {"key": "POSITION_SIZE_PCT", "value": str(new_pos_size)},
                     {"key": "MAX_RISK_PER_TRADE", "value": str(new_risk)},
                     {"key": "MAX_OPEN_POSITIONS", "value": str(new_max_pos)},
-                    {"key": "TRADING_MODE", "value": f'"{new_mode}"'}
+                    {"key": "TRADING_MODE", "value": f'"{new_mode}"'},
+                    {"key": "ENABLE_EMA_TREND", "value": f'"{str(new_trend).lower()}"'},
+                    {"key": "ENABLE_MACD_MOMENTUM", "value": f'"{str(new_macd).lower()}"'}
                 ]
                 for cfg in configs:
                     db.table("bot_config").upsert(cfg).execute()

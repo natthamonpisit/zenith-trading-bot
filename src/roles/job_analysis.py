@@ -134,17 +134,28 @@ class Judge:
         ai_conf = ai_data.get('confidence')
         ai_rec = ai_data.get('recommendation')
         
-        # --- 1. THE GUARDRAIL ---
-        # Standardized Key: RSI_THRESHOLD
-        rsi_limit = float(self.config.get('RSI_THRESHOLD', self.config.get('RSI_OVERBOUGHT', 75)))
+        # --- 1. THE HARD GUARDRAILS ---
         
-        # Rule: Never buy if overbought, even if AI loves it.
+        # A. RSI Veto (Always Active)
+        rsi_limit = float(self.config.get('RSI_THRESHOLD', self.config.get('RSI_OVERBOUGHT', 75)))
         if ai_rec == 'BUY' and rsi > rsi_limit:
-            return TradeDecision(
-                decision="REJECTED", 
-                size=0, 
-                reason=f"Technical Veto: RSI {rsi:.1f} > {rsi_limit}"
-            )
+            return TradeDecision(decision="REJECTED", size=0, reason=f"Technical Veto: RSI {rsi:.1f} > {rsi_limit}")
+            
+        # B. Trend Check (Configurable)
+        if self.config.get('ENABLE_EMA_TREND', 'false').lower() == 'true':
+            ema_50 = tech_data.get('ema_50', 0)
+            close = tech_data.get('close', 0)
+            if ai_rec == 'BUY' and close < ema_50:
+                return TradeDecision(decision="REJECTED", size=0, reason=f"Trend Veto: Price ${close:,.2f} < EMA50 ${ema_50:,.2f}")
+
+        # C. Momentum Check (Configurable)
+        if self.config.get('ENABLE_MACD_MOMENTUM', 'false').lower() == 'true':
+            macd = tech_data.get('macd', 0)
+            signal = tech_data.get('macd_signal', 0)
+            if ai_rec == 'BUY' and macd < signal:
+                return TradeDecision(decision="REJECTED", size=0, reason=f"Momentum Veto: MACD {macd:.4f} < Signal {signal:.4f}")
+
+        # Rule: AI must be confident.
         
         # Rule: AI must be confident.
         # Standardized Key: AI_CONFIDENCE_THRESHOLD
