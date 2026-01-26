@@ -1,7 +1,7 @@
 import streamlit as st
 import datetime
 import pytz
-from .utils import get_cfg
+from .utils import get_cfg, to_local_time
 
 def render_sidebar(db):
     with st.sidebar:
@@ -50,8 +50,7 @@ def render_sidebar(db):
                 if console_logs.data:
                     for log in console_logs.data:
                         try:
-                            # Use simple parsing for console speed
-                            ts = log['created_at'].split('T')[1][:8]
+                            ts = to_local_time(log['created_at'], '%H:%M:%S')
                         except: ts = "--:--"
                         
                         c_map = {"ERROR": "#FF4B4B", "WARNING": "#FFA726", "SUCCESS": "#00FF94", "INFO": "#B0BEC5"}
