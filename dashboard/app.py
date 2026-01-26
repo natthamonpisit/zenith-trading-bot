@@ -117,13 +117,33 @@ with st.sidebar:
     st.caption(f"System Time: {datetime.now().strftime('%H:%M:%S')}")
     st.markdown("---")
     
-        if st.button("💾 Save Configuration", type="primary"):
-            try:
-                db.table("bot_config").upsert({"key": "AI_CONFIDENCE_THRESHOLD", "value": str(new_ai)}).execute()
-                # TRADING_MODE is now handled in Sidebar
-                st.success("Configuration Updated Successfully!")
-            except Exception as e:
-                st.error(f"Save Failed: {e}")
+    
+    # Navigation Logic
+    pages = ['Dashboard', 'Strategy Config', 'Trade History', 'Analyze Report', 'System Status']
+    for p in pages:
+        if st.button(f"{'🔷' if st.session_state.page == p else '🔹'} {p}", key=f"nav_{p}", use_container_width=True):
+            navigate_to(p)
+            st.rerun()
+            
+    st.markdown("---")
+    st.markdown("<div style='margin-top:auto;'></div>", unsafe_allow_html=True)
+    
+    # Modern Kill Switch
+    st.markdown("#### 🚨 Emergency Control")
+    try:
+        config_res = db.table("bot_config").select("*").eq("key", "BOT_STATUS").execute()
+        current_status = config_res.data[0]['value'] if config_res.data else "ACTIVE"
+    except: current_status = "ACTIVE"
+
+    if current_status == "ACTIVE":
+        if st.button("🔴 STOP TRADING", type="primary", use_container_width=True, help="Force Halt All Operations"):
+            db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
+            st.rerun()
+    else:
+        st.error("⛔ SYSTEM HALTED")
+        if st.button("🟢 RESUME TRADING", use_container_width=True):
+            db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
+            st.rerun()
 
 # --- DASHBOARD PAGE ---
 if st.session_state.page == 'Dashboard':
