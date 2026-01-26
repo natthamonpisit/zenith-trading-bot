@@ -1,18 +1,18 @@
 import ccxt
 import os
 from src.database import get_db
-from src.roles.job_spy import Spy # Re-use Spy's connection logic if possible, or new instance
+from src.roles.job_price import PriceSpy # Re-use Spy's connection logic if possible, or new instance
 
-class Sniper:
+class SniperExecutor:
     """
-    The Sniper (Execution Engine)
+    THE SNIPER (Execution Engine)
     Role: Executes BUY/SELL orders on the exchange based on signals approved by The Judge.
     """
     def __init__(self):
         # We can actually reuse the Spy's exchange connection to avoid code duplication
         # But for separation of concerns, let's init a new one or pass it in.
         # For simplicity, let's create a new instance using the same robust logic as Spy
-        self.spy = Spy() 
+        self.spy = PriceSpy() 
         self.exchange = self.spy.exchange
         self.db = get_db()
 

@@ -1,11 +1,11 @@
 import streamlit as st
 from datetime import datetime
 import pytz
-from src.roles.job_spy import Spy
+from src.roles.job_price import PriceSpy
 
 @st.cache_resource
 def get_spy_instance():
-    return Spy()
+    return PriceSpy()
 
 def to_local_time(utc_str, format='%Y-%m-%d %H:%M'):
     try:

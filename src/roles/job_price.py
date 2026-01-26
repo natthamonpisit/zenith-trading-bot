@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-class Spy:
+class PriceSpy:
     """
-    The Spy (Data Collector)
+    THE SPY A (Price Collector)
     Role: Fetches market data (OHLCV) from the exchange and calculates basic technical indicators.
     """
     def __init__(self, exchange_id='binance'):

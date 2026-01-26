@@ -1,18 +1,24 @@
 import time
 import schedule
 from src.database import get_db
-from src.roles.job_spy import Spy
-from src.roles.job_ai_analyst import Strategist
-from src.roles.job_judge import Judge
-from src.roles.job_sniper import Sniper
-import pandas as pd
+
+# --- IMPORT NEW ROLES ---
+from src.roles.job_screener import HeadHunter
+from src.roles.job_price import PriceSpy
+from src.roles.job_news import NewsSpy
+from src.roles.job_scout import Radar
+from src.roles.job_analysis import Strategist, Judge
+from src.roles.job_executor import SniperExecutor
 
 # Initialize Team
 db = get_db()
-spy = Spy()
+head_hunter = HeadHunter()
+price_spy = PriceSpy()
+news_spy = NewsSpy()
+radar = Radar(price_spy) # Radar uses PriceSpy
 strategist = Strategist()
 judge = Judge()
-sniper = Sniper()
+sniper = SniperExecutor()
 
 TIMEFRAME = "1h"
 
@@ -30,17 +36,17 @@ def log_activity(role, message, level="INFO"):
 def process_pair(pair):
     """Encapsulated logic for a single trading pair"""
     try:
-        # 2. THE SPY: Fetch Data
-        print(f"--- 1. Spying on {pair} ---")
+        # 1. SPY A (Price)
+        print(f"--- 1. SPY A: Fetching Price for {pair} ---")
         log_activity("Spy", f"🕵️ Scanning {pair} market...")
-        df = spy.fetch_ohlcv(pair, TIMEFRAME)
+        df = price_spy.fetch_ohlcv(pair, TIMEFRAME)
         if df is None: 
             print(f"❌ Data Fetch Failed for {pair}")
             return
             
-        df = spy.calculate_indicators(df)
+        df = price_spy.calculate_indicators(df)
         
-        # 3. THE STRATEGIST: AI Analysis
+        # 2. STRATEGIST (AI)
         print("2. Strategist Analyzing...")
         
         # Get asset ID
@@ -60,7 +66,7 @@ def process_pair(pair):
         # LOG AI SUMMARY
         log_activity("Strategist", f"[{pair}] Sentiment: {analysis.get('sentiment_score')} | Confidence: {analysis.get('confidence')}%")
 
-        # 4. THE JUDGE: Risk Check
+        # 3. JUDGE (Rules)
         print("3. Judge Evaluate...")
 
         # FETCH REAL BALANCE based on Mode
@@ -76,8 +82,8 @@ def process_pair(pair):
             except: balance = 1000.0
         else:
             try:
-                # LIVE Mode: Fetch real USDT balance from Binance TH
-                bal_data = spy.get_account_balance()
+                # LIVE Mode: Fetch real USDT balance
+                bal_data = price_spy.get_account_balance()
                 balance = bal_data['total'].get('USDT', 0.0) if bal_data else 0.0
             except: balance = 0.0
         
@@ -99,7 +105,7 @@ def process_pair(pair):
         }
         signal_entry = db.table("trade_signals").insert(signal_data).execute()
         
-        # 5. THE SNIPER: Execution
+        # 4. SNIPER (Executor)
         if verdict.decision == "APPROVED":
             print("4. Sniper Firing!")
             log_activity("Sniper", f"🔫 Executing {pair}...", "WARNING")
@@ -117,9 +123,9 @@ def process_pair(pair):
         print(f"Error processing {pair}: {e}")
 
 def run_bot_cycle():
-    print("\n--- 🔄 Multi-Asset Cycle Start ---")
+    print("\n--- 🔄 Multi-Role Cycle Start ---")
     
-    # Reload Judge Config to get latest dashboard settings
+    # Reload Judge Config
     judge.reload_config()
     
     # 1. CHECK KILL SWITCH
@@ -132,25 +138,30 @@ def run_bot_cycle():
              return
     except: pass
 
-    # 2. SCAN TOP ASSETS
-    top_assets = spy.get_top_symbols(limit=10) # Scan Top 10 Volume Coins
-    if not top_assets:
-        top_assets = ["BTC/USDT", "ETH/USDT"]
+    # 2. RADAR/SCOUT: Scan Market
+    # Using 'Radar' role to find targets
+    targets = radar.scan_market() 
+    if not targets:
+        targets = ["BTC/USDT", "ETH/USDT"]
 
-    print(f"🎯 Targeting: {top_assets}")
+    print(f"🎯 Targets by Radar: {targets}")
     
-    for pair in top_assets:
+    # 3. SPY B: News (Placeholder)
+    # news = news_spy.fetch_latest_news()
+    
+    # Process each target
+    for pair in targets:
         process_pair(pair)
         time.sleep(2) # Be nice to API
 
 def start():
     try:
-        log_activity("System", "🚀 Zenith Bot Started (Top 10 Volume Scanner)", "SUCCESS")
+        log_activity("System", "🚀 Zenith Bot Started (6-Role Architecture)", "SUCCESS")
         
         # Run once immediately
         run_bot_cycle()
         
-        # Schedule: Run every 5 minutes instead of 20s to handle 10 coins gracefully
+        # Schedule
         schedule.every(5).minutes.do(run_bot_cycle) 
         
         print("Bot scheduled for 5-minute cycles.")
