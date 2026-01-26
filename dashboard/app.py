@@ -5,6 +5,7 @@ import os
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from src.database import get_db
 from dashboard.ui.sidebar import render_sidebar
 from dashboard.ui.dashboard_page import render_dashboard_page
 from dashboard.ui.config_page import render_config_page

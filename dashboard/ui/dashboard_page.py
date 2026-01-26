@@ -1,13 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import time
 from datetime import datetime
 import pytz
 from .utils import get_spy_instance, get_cfg, to_local_time
 
 def render_dashboard_page(db):
-    # Fetch Mode
     current_mode = get_cfg(db, "TRADING_MODE", "PAPER").replace('"', '')
 
     c1, c2 = st.columns([3, 1])
@@ -38,7 +36,6 @@ def render_dashboard_page(db):
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Live Activity Feed
     with st.expander("📡 Live Activity Feed", expanded=True):
         try:
              logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(5).execute()
@@ -53,7 +50,6 @@ def render_dashboard_page(db):
     main_col, right_col = st.columns([3, 1])
 
     with right_col:
-        # Quick Switch
         with st.container(border=True):
             st.markdown("##### 🎚️ Mode Control")
             toggle_mode = st.toggle("Enable Live Trading", value=(current_mode == "LIVE"))
@@ -61,7 +57,6 @@ def render_dashboard_page(db):
                 db.table("bot_config").upsert({"key": "TRADING_MODE", "value": f'"{ "LIVE" if toggle_mode else "PAPER" }"'}).execute()
                 st.rerun()
 
-        # Mini Portfolio
         with st.container(border=True):
             st.markdown(f"##### 💰 {'Real' if current_mode=='LIVE' else 'Paper'} Portfolio")
             try:
@@ -76,9 +71,8 @@ def render_dashboard_page(db):
                     sim = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
                     bal = sim.data[0]['balance'] if sim.data else 1000.0
                     st.metric("Mock Balance", f"${bal:,.2f}")
-            except: st.error("Connection Mesh Error")
+            except: st.error("Connection Error")
 
-        # Market Watch
         with st.container(border=True):
             st.markdown("##### 🔭 Market Watch")
             try:
@@ -90,18 +84,26 @@ def render_dashboard_page(db):
             except: pass
 
     with main_col:
-        # Chart
         with st.container(border=True):
              st.markdown("#### 📈 Active Market Chart")
-             # ... (Truncated logic for brevity, the full version will be in the actual write)
-             # Let's keep the chart logic modular as well.
-             render_chart_section(db)
+             render_chart_section()
 
-        # Assets in Progress (Live)
         if current_mode == "LIVE":
             render_live_holdings(db)
+        
+        # AI Scorecards
+        with st.container(border=True):
+            st.markdown("#### 🧠 AI Scorecards")
+            try:
+                signals = db.table("trade_signals").select("*, assets(symbol)").order("created_at", desc=True).limit(5).execute()
+                for log in signals.data:
+                    symbol = log['assets']['symbol'] if log['assets'] else "UNKNOWN"
+                    ts = to_local_time(log['created_at'], '%H:%M')
+                    with st.expander(f"{'✅' if log['status']=='EXECUTED' else '🛡️'} {ts} | {symbol} | {log['signal_type']}"):
+                         st.info(f"💡 **AI Reasoning:** {log['judge_reason']}")
+            except: pass
 
-def render_chart_section(db):
+def render_chart_section():
     try:
         spy = get_spy_instance()
         if not spy.exchange.markets: spy.load_markets_custom()
@@ -116,9 +118,10 @@ def render_chart_section(db):
         if df is not None:
             df = spy.calculate_indicators(df)
             fig = go.Figure()
-            fig.add_trace(go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Price'))
-            # ... add indicators ...
-            fig.update_layout(template="plotly_dark", height=400, margin=dict(l=0,r=0,t=0,b=0))
+            fig.add_trace(go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Price', increasing_line_color='#00FF94', decreasing_line_color='#FF0055'))
+            if "EMA 20" in indicators: fig.add_trace(go.Scatter(x=df['timestamp'], y=df['ema_20'], line=dict(color='yellow', width=1), name='EMA 20'))
+            if "EMA 50" in indicators: fig.add_trace(go.Scatter(x=df['timestamp'], y=df['ema_50'], line=dict(color='cyan', width=1), name='EMA 50'))
+            fig.update_layout(template="plotly_dark", height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
     except Exception as e: st.error(f"Chart Error: {e}")
 
@@ -128,6 +131,26 @@ def render_live_holdings(db):
         if open_live.data:
             st.markdown("#### ⚡ Assets in Progress (Live)")
             for p in open_live.data:
-                # Same card logic as before...
-                st.info(f"Holding {p['assets']['symbol']} - Live PnL logic here")
+                symbol = p['assets']['symbol'] if p['assets'] else "UNKNOWN"
+                qty = float(p['quantity'])
+                entry_price = float(p['entry_avg'])
+                try: 
+                    ticker = get_spy_instance().exchange.fetch_ticker(symbol)
+                    curr_price = ticker['last']
+                except: curr_price = entry_price
+                
+                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                duration = datetime.now(pytz.utc) - utc_entry
+                dur_str = f"{duration.days}d {duration.seconds//3600}h {(duration.seconds//60)%60}m"
+                
+                pnl = (curr_price - entry_price) * qty
+                pnl_pct = (pnl / (entry_price * qty)) * 100 if entry_price > 0 else 0
+                color = "#00FF94" if pnl >= 0 else "#FF4B4B"
+
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+                    with c1: st.markdown(f"**{symbol}**"); st.caption("Live")
+                    with c2: st.markdown(f"Entry: `${entry_price:,.2f}`")
+                    with c3: st.markdown(f"Duration: `{dur_str}`")
+                    with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
     except: pass

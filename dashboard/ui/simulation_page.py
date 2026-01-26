@@ -6,13 +6,13 @@ from .utils import get_spy_instance, to_local_time
 
 def render_simulation_page(db):
     st.markdown("### 🎮 Simulation Mode (Paper Trading)")
-    st.caption("Test your strategies with mock money without risking real capital.")
+    st.caption("Test your strategies with mock money.")
     
     try:
         sim_wallet = db.table("simulation_portfolio").select("*").eq("id", 1).execute()
         balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
         
-        # Calculate Unrealized PnL
+        # Unrealized PnL
         unrealized_pnl = 0.0
         open_pos = db.table("positions").select("*, assets(symbol)").eq("is_open", True).eq("is_sim", True).execute()
         
@@ -34,11 +34,31 @@ def render_simulation_page(db):
         st.subheader("🚀 Assets in Progress (Sim)")
         if open_pos.data:
             for p in open_pos.data:
+                symbol = p['assets']['symbol'] if p['assets'] else "UNKNOWN"
+                qty = float(p['quantity'])
+                entry_price = float(p['entry_avg'])
+                
+                try: 
+                    ticker = get_spy_instance().exchange.fetch_ticker(symbol)
+                    curr_price = ticker['last']
+                except: curr_price = entry_price
+                
+                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                local_entry = utc_entry.astimezone(pytz.timezone('Asia/Bangkok'))
+                duration = datetime.now(pytz.utc) - utc_entry
+                
+                dur_str = f"{duration.days}d {duration.seconds//3600}h {(duration.seconds//60)%60}m"
+                pnl = (curr_price - entry_price) * qty
+                pnl_pct = (pnl / (entry_price * qty)) * 100 if entry_price > 0 else 0
+                color = "#00FF94" if pnl >= 0 else "#FF4B4B"
+
                 with st.container(border=True):
-                    # Same rich card logic as in previous execution
-                    symbol = p['assets']['symbol'] if p['assets'] else "UNKNOWN"
-                    pnl = (ticker['last'] - float(p['entry_avg'])) * float(p['quantity']) # Simplified
-                    st.markdown(f"**{symbol}** | PnL: `${pnl:,.2f}`")
+                    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+                    with c1: st.markdown(f"#### {symbol}"); st.caption(f"Side: **{p['side']}**")
+                    with c2: st.markdown(f"**Entry**\n`${entry_price:,.2f}`")
+                    with c3: st.markdown(f"**Duration**\n`{dur_str}`")
+                    with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
+                    st.caption(f"Entered at: {local_entry.strftime('%Y-%m-%d %H:%M:%S')} (BKKT)")
         else: st.info("No open positions in simulation.")
 
         st.divider()
@@ -47,6 +67,7 @@ def render_simulation_page(db):
         if sim_signals.data:
             df = pd.DataFrame(sim_signals.data)
             df['symbol'] = df['assets'].apply(lambda x: x['symbol'] if x else 'UNKNOWN')
-            st.dataframe(df[['created_at', 'symbol', 'signal_type', 'entry_target', 'status']], use_container_width=True)
+            df['time'] = df['created_at'].apply(lambda x: to_local_time(x))
+            st.dataframe(df[['time', 'symbol', 'signal_type', 'entry_target', 'status']], use_container_width=True)
              
     except Exception as e: st.error(f"Sim Error: {e}")
