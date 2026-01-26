@@ -114,9 +114,12 @@ if not st.session_state.entered:
 # --- LEFT SIDEBAR (Navigation) ---
 with st.sidebar:
     st.markdown("### 🤖 Zenith OS")
-    st.caption(f"System Time: {datetime.now().strftime('%H:%M:%S')}")
-    st.markdown("---")
+    # Timezone Fix
+    tz_th = pytz.timezone('Asia/Bangkok')
+    system_time = datetime.now(tz_th).strftime('%H:%M:%S')
+    st.caption(f"System Time (TH): {system_time}")
     
+    st.markdown("---")
     
     # Navigation Logic
     pages = ['Dashboard', 'Strategy Config', 'Trade History', 'Analyze Report', 'System Status']
@@ -183,6 +186,20 @@ if st.session_state.page == 'Dashboard':
 
     st.markdown("<br>", unsafe_allow_html=True)
     
+    # --- LIVE ACTIVITY FEED (New Feature) ---
+    with st.expander("📡 Live Activity Feed", expanded=True):
+        try:
+             logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(5).execute()
+             if logs.data:
+                 for log in logs.data:
+                     # Parse Time
+                     ts = log['created_at'].split("T")[1].split(".")[0] # Simple parsing
+                     color = "red" if log['level'] == "ERROR" else "orange" if log['level'] == "WARNING" else "#00FF94" if log['level'] == "SUCCESS" else "#ccc"
+                     st.markdown(f"<code style='color:#666'>{ts}</code> **{log['role']}**: <span style='color:{color}'>{log['message']}</span>", unsafe_allow_html=True)
+             else:
+                 st.info("Waiting for bot activity...")
+        except: st.caption("Log connection pending...")
+
     main_col, right_col = st.columns([3, 1])
 
     # --- RIGHT SIDEBAR CONTENTS ---
@@ -278,13 +295,23 @@ if st.session_state.page == 'Dashboard':
             </div>
             """, unsafe_allow_html=True)
 
-        # 4. Market Watch
+        # 4. Market Watch (Real Data)
         with st.container(border=True):
             st.markdown("##### 🔭 Market Watch")
-            for coin in ["BTC/USDT", "ETH/USDT", "SOL/USDT"]:
-                 # Mock Sparkline Effect
-                 st.markdown(f"**{coin}** <span style='float:right; color:#00FF94'>$---.--</span>", unsafe_allow_html=True)
-                 st.progress(70) # Visual filler for sparkline
+            try:
+                spy_instance = get_spy_instance()
+                for coin in ["BTC/USDT", "ETH/USDT", "SOL/USDT"]:
+                     try:
+                         # Fetch quick ticker
+                         ticker = spy_instance.exchange.fetch_ticker(coin)
+                         price = ticker['last']
+                         pct = ticker.get('percentage', 0.0)
+                         color = "#00FF94" if pct >= 0 else "#FF0055"
+                         
+                         st.markdown(f"**{coin}** <span style='float:right; color:{color}'>${price:,.2f}</span>", unsafe_allow_html=True)
+                     except:
+                         st.markdown(f"**{coin}** <span style='float:right; color:#666'>Err</span>", unsafe_allow_html=True)
+            except: pass
 
     # --- MAIN CONTENTS ---
     with main_col:
