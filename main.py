@@ -16,9 +16,9 @@ sniper = Sniper()
 
 TRADING_PAIR = "BTC/USDT" 
 TIMEFRAME = "1h"
-# Helper: Log activity to DB so Dashboard can see it live
+
 def log_activity(role, message, level="INFO"):
-    print(f"{role}: {message}")
+    print(f"[{role}] {message}")  # <--- Added explicit print here
     try:
         db.table("system_logs").insert({
             "role": role,
@@ -29,25 +29,33 @@ def log_activity(role, message, level="INFO"):
         print(f"Log Error: {e}")
 
 def run_bot_cycle():
-    # log_activity("System", f"--- 🔄 Bot Cycle Start: {pd.Timestamp.now()} ---")
+    print("--- 🔄 Cycle Start ---")
+    
+    # Reload Judge Config to get latest dashboard settings
+    judge.reload_config()
     
     # 1. CHECK KILL SWITCH
     try:
         config = db.table("bot_config").select("*").eq("key", "BOT_STATUS").execute()
         if config.data and config.data[0]['value'] == "STOPPED":
+             print("⛔ Bot is STOPPED.")
              log_activity("System", "⛔ Bot is STOPPED via Dashboard.", "WARNING")
              return
     except: pass
 
     # 2. THE SPY: Fetch Data
-    log_activity("Spy", "🕵️ Scanning BTC/USDT market...")
+    print(f"1. Spying on {TRADING_PAIR}...")
+    log_activity("Spy", f"🕵️ Scanning {TRADING_PAIR} market...")
     df = spy.fetch_ohlcv(TRADING_PAIR, TIMEFRAME)
     if df is None: 
+        print("❌ Data Fetch Failed")
         log_activity("Spy", "❌ Failed to fetch market data", "ERROR")
         return
     df = spy.calculate_indicators(df)
+    print(f"   - Data fetched: {len(df)} candles")
     
     # 3. THE STRATEGIST: AI Analysis
+    print("2. Strategist Analyzing...")
     log_activity("Strategist", "🧠 Analyzing market trends...")
     # Get asset ID
     asset = db.table("assets").select("id").eq("symbol", TRADING_PAIR).execute()
@@ -59,11 +67,15 @@ def run_bot_cycle():
         asset_id = asset.data[0]['id']
 
     analysis = strategist.analyze_market(None, TRADING_PAIR, df.tail(5).to_dict()) # Send last 5 candles
-    if not analysis: return
+    if not analysis: 
+        print("❌ AI Analysis Failed")
+        return
     
+    print(f"   - AI Verdict: {analysis.get('recommendation')} (Conf: {analysis.get('confidence')}%)")
     log_activity("Strategist", f"Analyzed Sentiment: {analysis.get('sentiment_score')} | Confidence: {analysis.get('confidence')}%")
 
     # 4. THE JUDGE: Risk Check
+    print("3. Judge Evaluate...")
     log_activity("Judge", "⚖️ Evaluating Risk Protocols...")
     
     # Convert AI output to needed format
@@ -72,6 +84,7 @@ def run_bot_cycle():
     balance = 1000 # Mock balance for now, or fetch from spy.exchange.fetch_balance()
     
     verdict = judge.evaluate(ai_data, tech_data, balance)
+    print(f"   - Judge Verdict: {verdict.decision}")
     log_activity("Judge", f"Verdict: {verdict.decision} ({verdict.reason})")
     
     # Log Signal to DB
@@ -86,6 +99,7 @@ def run_bot_cycle():
     
     # 5. THE SNIPER: Execution
     if verdict.decision == "APPROVED":
+        print("4. Sniper Firing!")
         log_activity("Sniper", "🔫 Loading execution module...")
         # Use full signal object
         full_signal = signal_entry.data[0]
@@ -96,6 +110,9 @@ def run_bot_cycle():
              log_activity("Sniper", "✅ Order Executed Successfully!", "SUCCESS")
         else:
              log_activity("Sniper", "❌ Order Execution Failed", "ERROR")
+    else:
+        print("4. Sniper Standby.")
+
 
 def start():
     try:

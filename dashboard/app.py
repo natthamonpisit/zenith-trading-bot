@@ -161,10 +161,12 @@ with st.sidebar:
         with st.container(height=250):
             if console_logs.data:
                 for log in console_logs.data:
-                    # Simple Time Parsing
+                    # Time Parsing with Timezone Conversion
                     try:
-                        ts = log['created_at'].split("T")[1].split(".")[0]
-                    except: ts = "--:--"
+                        utc_time = datetime.fromisoformat(log['created_at'].replace('Z', '+00:00'))
+                        local_time = utc_time.astimezone(pytz.timezone('Asia/Bangkok'))
+                        ts = local_time.strftime('%H:%M:%S')
+                    except Exception: ts = "--:--"
                     
                     # Color Coding
                     c_map = {"ERROR": "#FF4B4B", "WARNING": "#FFA726", "SUCCESS": "#00FF94", "INFO": "#B0BEC5"}
@@ -226,14 +228,20 @@ if st.session_state.page == 'Dashboard':
              logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(5).execute()
              if logs.data:
                  for log in logs.data:
-                     # Parse Time
-                     ts = log['created_at'].split("T")[1].split(".")[0] # Simple parsing
+                     # Parse Time with Timezone
+                     try:
+                        utc_time = datetime.fromisoformat(log['created_at'].replace('Z', '+00:00'))
+                        local_time = utc_time.astimezone(pytz.timezone('Asia/Bangkok'))
+                        ts = local_time.strftime('%H:%M:%S')
+                     except: ts = "--:--"
+                     
                      color = "red" if log['level'] == "ERROR" else "orange" if log['level'] == "WARNING" else "#00FF94" if log['level'] == "SUCCESS" else "#ccc"
                      st.markdown(f"<code style='color:#666'>{ts}</code> **{log['role']}**: <span style='color:{color}'>{log['message']}</span>", unsafe_allow_html=True)
              else:
                  st.info("Waiting for bot activity...")
         except Exception as e: 
              st.caption(f"Log Error: {e}")
+
 
     main_col, right_col = st.columns([3, 1])
 
@@ -424,7 +432,14 @@ if st.session_state.page == 'Dashboard':
                     symbol = log['assets']['symbol'] if log['assets'] else "UNKNOWN"
                     status = log['status']
                     
-                    with st.expander(f"{'✅' if status=='EXECUTED' else '🛡️'} {log['created_at'].split('T')[1][:5]} | {symbol} | {log['signal_type']}"):
+                    # Time Parsing with Timezone
+                    try:
+                        utc_time = datetime.fromisoformat(log['created_at'].replace('Z', '+00:00'))
+                        local_time = utc_time.astimezone(pytz.timezone('Asia/Bangkok'))
+                        ts_display = local_time.strftime('%H:%M')
+                    except: ts_display = "--:--"
+
+                    with st.expander(f"{'✅' if status=='EXECUTED' else '🛡️'} {ts_display} | {symbol} | {log['signal_type']}"):
                          # Scorecard Layout
                          st.markdown("##### 📊 Decision Scorecard")
                          c1, c2, c3 = st.columns(3)
@@ -451,47 +466,66 @@ elif st.session_state.page == 'Strategy Config':
     st.markdown("### ⚙️ Strategy Configuration")
     st.caption("Adjust the brain parameters of the AI Strategist and Risk Judge.")
     
+    # helper to fetch config safely
+    def get_cfg(key, default):
+        try:
+            res = db.table("bot_config").select("value").eq("key", key).execute()
+            return res.data[0]['value'] if res.data else default
+        except: return default
+
     with st.container(border=True):
-        st.markdown("#### 🧠 AI Parameters")
+        st.markdown("#### 🧠 AI & Logic Parameters")
+        col1, col2 = st.columns(2)
         
-        # Fetch current config or use defaults
-        try: 
-            conf_ai = db.table("bot_config").select("*").eq("key", "AI_CONFIDENCE_THRESHOLD").execute()
-            current_ai = int(conf_ai.data[0]['value']) if conf_ai.data else 75
-        except: current_ai = 75
-        
-        new_ai = st.slider("Minimum AI Confidence (%)", 0, 100, current_ai, help="Signals below this confidence will be REJECTED by The Judge.")
-        
-        st.markdown("#### ⚖️ Risk Management")
+        with col1:
+            current_ai = int(get_cfg("AI_CONF_THRESHOLD", 75))
+            new_ai = st.slider("Min AI Confidence (%)", 0, 100, current_ai, help="Signals below this will be REJECTED.")
+            
+            current_rsi = int(get_cfg("RSI_THRESHOLD", 70))
+            new_rsi = st.slider("RSI Veto Threshold", 50, 90, current_rsi, help="Never BUY if RSI is above this level.")
+
+        with col2:
+            current_pos_size = float(get_cfg("POSITION_SIZE_PCT", 5.0))
+            new_pos_size = st.number_input("Position Size (% of Wallet)", 1.0, 100.0, current_pos_size, step=0.5)
+            
+            current_risk = float(get_cfg("MAX_RISK_PER_TRADE", 2.0))
+            new_risk = st.number_input("Max Risk Per Trade (%)", 0.1, 10.0, current_risk, step=0.1)
+
+        st.markdown("#### ⚖️ Flow Controls")
         c1, c2 = st.columns(2)
         with c1:
-             risk_per_trade = st.number_input("Risk Per Trade (%)", value=2.0)
+            current_max_pos = int(get_cfg("MAX_OPEN_POSITIONS", 5))
+            new_max_pos = st.number_input("Max Open Positions", 1, 20, current_max_pos)
         with c2:
-             max_open_pos = st.number_input("Max Open Positions", value=5, step=1)
+            # Mode Toggle
+            curr_mode = get_cfg("TRADING_MODE", "PAPER").replace('"', '')
+            new_mode = st.radio("Select Mode", ["PAPER", "LIVE"], index=0 if curr_mode=="PAPER" else 1, horizontal=True)
 
         st.markdown("---")
-        st.markdown("#### 🎮 Operation Mode")
-        
-        # Mode Toggle
-        try:
-            conf_mode = db.table("bot_config").select("*").eq("key", "TRADING_MODE").execute()
-            curr_mode = conf_mode.data[0]['value'] if conf_mode.data else "PAPER"
-        except: curr_mode = "PAPER"
-        
-        new_mode = st.radio("Select Mode", ["PAPER", "LIVE"], index=0 if curr_mode=="PAPER" else 1, horizontal=True)
         if new_mode == "LIVE": 
             st.warning("⚠️ LIVE MODE ENABLED: Real orders will be executed on Binance!")
         else:
             st.success("✅ PAPER MODE: Using mock balance ($1,000). Safe testing.")
              
-        if st.button("💾 Save Configuration", type="primary"):
+        if st.button("💾 Save Configuration", type="primary", use_container_width=True):
             try:
-                db.table("bot_config").upsert({"key": "AI_CONFIDENCE_THRESHOLD", "value": str(new_ai)}).execute()
-                db.table("bot_config").upsert({"key": "TRADING_MODE", "value": new_mode}).execute()
-                # Store others if needed
-                st.success("Configuration Updated Successfully!")
+                configs = [
+                    {"key": "AI_CONF_THRESHOLD", "value": str(new_ai)},
+                    {"key": "RSI_THRESHOLD", "value": str(new_rsi)},
+                    {"key": "POSITION_SIZE_PCT", "value": str(new_pos_size)},
+                    {"key": "MAX_RISK_PER_TRADE", "value": str(new_risk)},
+                    {"key": "MAX_OPEN_POSITIONS", "value": str(new_max_pos)},
+                    {"key": "TRADING_MODE", "value": f'"{new_mode}"'}
+                ]
+                for cfg in configs:
+                    db.table("bot_config").upsert(cfg).execute()
+                
+                st.success("Configuration Updated! The Judge will now use these settings.")
+                time.sleep(1)
+                st.rerun()
             except Exception as e:
                 st.error(f"Save Failed: {e}")
+
 
 elif st.session_state.page == 'Trade History':
     st.markdown("### 📜 Trade History")

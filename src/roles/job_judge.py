@@ -16,16 +16,26 @@ class Judge:
         # Load config dynamically from DB
         self.config = self._load_config()
 
+    def reload_config(self):
+        """Refreshes configuration from the database."""
+        try:
+            if self.db:
+                response = self.db.table("bot_config").select("*").execute()
+                self.config = {item['key']: item['value'] for item in response.data}
+                print(f"[Judge] Configuration reloaded.")
+        except Exception as e:
+            print(f"[Judge] Failed to reload config: {e}")
+
     def _load_config(self):
         try:
             # Mock data for blueprint if DB not connected
             if not self.db:
-                return {'RSI_OVERBOUGHT': 70, 'AI_MIN_CONFIDENCE': 75, 'MAX_RISK_PER_TRADE': 2.0}
+                return {'RSI_THRESHOLD': 70, 'AI_CONF_THRESHOLD': 75, 'MAX_RISK_PER_TRADE': 2.0}
             
             response = self.db.table("bot_config").select("*").execute()
             return {item['key']: item['value'] for item in response.data}
         except:
-            return {'RSI_OVERBOUGHT': 70, 'AI_MIN_CONFIDENCE': 75}
+            return {'RSI_THRESHOLD': 70, 'AI_CONF_THRESHOLD': 75}
 
     def evaluate(self, ai_data, tech_data, portfolio_balance):
         """
@@ -40,18 +50,20 @@ class Judge:
         ai_rec = ai_data.get('recommendation')
         
         # --- 1. THE GUARDRAIL ---
-        rsi_limit = float(self.config.get('RSI_OVERBOUGHT', 70))
+        # Standardized Key: RSI_THRESHOLD
+        rsi_limit = float(self.config.get('RSI_THRESHOLD', self.config.get('RSI_OVERBOUGHT', 70)))
         
         # Rule: Never buy if overbought, even if AI loves it.
-        if rsi > rsi_limit and ai_rec == 'BUY':
+        if ai_rec == 'BUY' and rsi > rsi_limit:
             return TradeDecision(
                 decision="REJECTED", 
                 size=0, 
-                reason=f"Technical Veto: RSI {rsi} > {rsi_limit}"
+                reason=f"Technical Veto: RSI {rsi:.1f} > {rsi_limit}"
             )
         
         # Rule: AI must be confident.
-        min_conf = float(self.config.get('AI_MIN_CONFIDENCE', 75))
+        # Standardized Key: AI_CONFIDENCE_THRESHOLD
+        min_conf = float(self.config.get('AI_CONF_THRESHOLD', self.config.get('AI_MIN_CONFIDENCE', 75)))
         if ai_conf < min_conf:
              return TradeDecision(
                  decision="REJECTED", 
@@ -60,11 +72,10 @@ class Judge:
              )
 
         # --- 2. POSITION SIZING ---
-        # Fixed Fractional Sizing: Risk 2% of equity per trade
-        risk_per_trade_pct = float(self.config.get('MAX_RISK_PER_TRADE', 2.0)) / 100
-        
-        # Simplified for Blueprint: Flat 5% allocation for spot
-        size = portfolio_balance * 0.05 
+        # Standardized Key: POSITION_SIZE_PCT
+        # Default to 5% if not set
+        pos_size_pct = float(self.config.get('POSITION_SIZE_PCT', 5.0)) / 100
+        size = portfolio_balance * pos_size_pct 
         
         return TradeDecision(
             decision="APPROVED",
