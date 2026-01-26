@@ -1,5 +1,7 @@
 import time
 import schedule
+import threading
+import os
 from src.database import get_db
 
 # --- IMPORT NEW ROLES ---
@@ -173,10 +175,28 @@ def run_bot_cycle():
         process_pair(pair, timeframe)
         time.sleep(2) # Be nice to API
 
+def start_watchdog():
+    """Monitors system heartbeat and kills process if stuck"""
+    global last_heartbeat
+    print("🐕 Watchdog Started")
+    while True:
+        time.sleep(60)
+        # If no heartbeat for 5 minutes (300s), kill the process
+        if time.time() - last_heartbeat > 300:
+            msg = f"Watchdog: System Frozen for {time.time() - last_heartbeat:.0f}s. RESTARTING CONTAINER..."
+            print(f"💀 {msg}")
+            log_activity("System", msg, "ERROR")
+            os._exit(1) # Force Kill
+
 def start():
+    global last_heartbeat
     try:
         log_activity("System", "🚀 Zenith Bot Started (6-Role Architecture)", "SUCCESS")
         
+        # Start Watchdog
+        wd = threading.Thread(target=start_watchdog, daemon=True)
+        wd.start()
+
         # Run once immediately
         run_bot_cycle()
         
