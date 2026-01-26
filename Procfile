@@ -1,2 +1,2 @@
-web: python diagnostic_server.py
+web: streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
 # worker: python main.py
