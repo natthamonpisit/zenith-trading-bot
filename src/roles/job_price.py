@@ -177,15 +177,42 @@ class PriceSpy:
             valid_pairs = []
 
             # Batch Fetch for Speed & Reliability
-            # Strategy: Fetch ALL tickers at once (no parameter), then filter by target_list
             print(f"Spy: Scanning {len(target_list)} candidates...")
             if callback: callback(f"Radar: Bulk scanning {len(target_list)} pairs...")
 
             try:
-                # Fetch ALL tickers at once (CCXT Binance doesn't accept list parameter)
-                # This is faster than looping and avoids "Mandatory parameter 'symbol' was not sent" error
-                print(f"Spy: Fetching all market tickers...")
-                all_tickers = self.exchange.fetch_tickers()
+                # Binance TH requires native API call (CCXT's fetch_tickers doesn't work)
+                if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
+                    print(f"Spy: Fetching all tickers from Binance TH API...")
+                    import requests
+                    
+                    # Use native Binance TH API endpoint
+                    response = requests.get('https://api.binance.th/api/v1/ticker/24hr', timeout=10)
+                    response.raise_for_status()
+                    tickers_data = response.json()
+                    
+                    # Convert to dict format {symbol: ticker_data}
+                    all_tickers = {}
+                    for ticker in tickers_data:
+                        # Convert BTCUSDT -> BTC/USDT format
+                        raw_symbol = ticker['symbol']
+                        if raw_symbol.endswith('USDT'):
+                            base = raw_symbol[:-4]
+                            quote = raw_symbol[-4:]
+                            symbol = f"{base}/{quote}"
+                            
+                            all_tickers[symbol] = {
+                                'symbol': symbol,
+                                'quoteVolume': float(ticker.get('quoteVolume', 0)),
+                                'last': float(ticker.get('lastPrice', 0)),
+                                'baseVolume': float(ticker.get('volume', 0))
+                            }
+                    
+                    print(f"Spy: Loaded {len(all_tickers)} tickers from Binance TH API.")
+                else:
+                    # Binance Global or other exchanges: Use CCXT
+                    print(f"Spy: Fetching all market tickers via CCXT...")
+                    all_tickers = self.exchange.fetch_tickers()
                 
                 # Filter only symbols in our target_list
                 for symbol in target_list:
