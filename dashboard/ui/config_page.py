@@ -47,6 +47,18 @@ def render_config_page(db):
             macd_val = get_cfg(db, "ENABLE_MACD_MOMENTUM", "false").replace('"', '').lower() == 'true'
             new_macd = st.checkbox("✅ Momentum Veto (Bullish MACD)", value=macd_val, help="Reject BUY if MACD < Signal Line.")
 
+        st.markdown("#### 📉 Trailing Stop Settings")
+        ts1, ts2, ts3 = st.columns(3)
+        with ts1:
+            trail_enabled = get_cfg(db, "TRAILING_STOP_ENABLED", "true").replace('"', '').lower() == 'true'
+            new_trail_enabled = st.checkbox("Enable Trailing Stop", value=trail_enabled, help="Auto-sell when price drops X% from peak.")
+        with ts2:
+            trail_pct = float(get_cfg(db, "TRAILING_STOP_PCT", 3.0))
+            new_trail_pct = st.number_input("Trail Distance (%)", 0.5, 20.0, trail_pct, step=0.5, help="Sell if price drops this % from highest point.")
+        with ts3:
+            min_prof = float(get_cfg(db, "MIN_PROFIT_TO_TRAIL_PCT", 1.0))
+            new_min_prof = st.number_input("Min Profit to Activate (%)", 0.0, 50.0, min_prof, step=0.5, help="Trailing stop only activates after this profit %.")
+
         # --- 3. Head Hunter (Fundamental) Config ---
         st.subheader("🕵️ Head Hunter Settings")
         
@@ -90,7 +102,10 @@ def render_config_page(db):
                     {"key": "TRADING_MODE", "value": new_mode},
                     {"key": "TIMEFRAME", "value": new_tf},
                     {"key": "ENABLE_EMA_TREND", "value": str(new_trend).lower()},
-                    {"key": "ENABLE_MACD_MOMENTUM", "value": str(new_macd).lower()}
+                    {"key": "ENABLE_MACD_MOMENTUM", "value": str(new_macd).lower()},
+                    {"key": "TRAILING_STOP_ENABLED", "value": str(new_trail_enabled).lower()},
+                    {"key": "TRAILING_STOP_PCT", "value": str(new_trail_pct)},
+                    {"key": "MIN_PROFIT_TO_TRAIL_PCT", "value": str(new_min_prof)}
                 ]
                 for cfg in configs:
                     db.table("bot_config").upsert(cfg).execute()

@@ -85,6 +85,10 @@ CREATE TABLE IF NOT EXISTS positions (
     closed_at TIMESTAMP WITH TIME ZONE
 );
 
+-- Trailing Stop columns for positions
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS highest_price_seen NUMERIC;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS trailing_stop_price NUMERIC;
+
 -- 7. Bot Config (Dynamic Settings)
 CREATE TABLE IF NOT EXISTS bot_config (
     key TEXT PRIMARY KEY,
@@ -105,7 +109,10 @@ VALUES
 ('TIMEFRAME', '1h', 'Default trading timeframe'),
 ('MIN_VOLUME', '50000', 'Minimum 24h volume in USDT'),
 ('TRADING_UNIVERSE', 'ALL', 'ALL, SAFE_LIST, or TOP_30'),
-('FARMING_INTERVAL_HOURS', '12', 'Hours between farming cycles')
+('FARMING_INTERVAL_HOURS', '12', 'Hours between farming cycles'),
+('TRAILING_STOP_ENABLED', 'true', 'Enable trailing stop loss'),
+('TRAILING_STOP_PCT', '3.0', 'Trailing stop percentage below peak price'),
+('MIN_PROFIT_TO_TRAIL_PCT', '1.0', 'Minimum profit % before trailing stop activates')
 ON CONFLICT DO NOTHING;
 
 -- 8. System Logs

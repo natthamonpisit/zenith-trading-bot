@@ -180,6 +180,86 @@ def update_status_db(msg):
     except Exception as e:
         print(f"Status DB update error: {e}")
 
+def check_trailing_stops():
+    """Check all open positions for trailing stop triggers."""
+    try:
+        # Read config
+        trail_enabled_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_ENABLED").execute()
+        if not trail_enabled_res.data or str(trail_enabled_res.data[0]['value']).replace('"', '').strip().lower() != 'true':
+            return
+
+        trail_pct_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_PCT").execute()
+        trail_pct = float(str(trail_pct_res.data[0]['value']).replace('"', '').strip()) / 100 if trail_pct_res.data else 0.03
+
+        min_profit_res = db.table("bot_config").select("value").eq("key", "MIN_PROFIT_TO_TRAIL_PCT").execute()
+        min_profit_pct = float(str(min_profit_res.data[0]['value']).replace('"', '').strip()) / 100 if min_profit_res.data else 0.01
+
+        # Fetch ALL open positions (both PAPER and LIVE)
+        positions = db.table("positions").select("*, assets(symbol)").eq("is_open", True).execute()
+        if not positions.data:
+            return
+
+        for pos in positions.data:
+            symbol = pos['assets']['symbol'] if pos.get('assets') else None
+            if not symbol:
+                continue
+
+            entry_price = float(pos['entry_avg'])
+            highest = float(pos.get('highest_price_seen') or entry_price)
+
+            # Fetch current price
+            try:
+                ticker = price_spy.exchange.fetch_ticker(symbol)
+                current_price = ticker['last']
+            except Exception as e:
+                print(f"Trailing stop: Failed to fetch price for {symbol}: {e}")
+                continue
+
+            # Update highest price seen
+            if current_price > highest:
+                highest = current_price
+                db.table("positions").update({"highest_price_seen": highest}).eq("id", pos['id']).execute()
+
+            # Check if min profit threshold reached
+            profit_pct = (highest - entry_price) / entry_price
+            if profit_pct < min_profit_pct:
+                continue  # Not enough profit to activate trailing stop
+
+            # Calculate trailing stop price
+            trail_price = highest * (1 - trail_pct)
+
+            # Update trailing_stop_price in DB (for dashboard visibility)
+            db.table("positions").update({"trailing_stop_price": trail_price}).eq("id", pos['id']).execute()
+
+            # TRIGGER: Price dropped below trailing stop
+            if current_price <= trail_price:
+                is_sim = pos.get('is_sim', True)
+                log_activity("System", f"Trailing Stop triggered for {symbol}! Price ${current_price:,.2f} < Stop ${trail_price:,.2f}", "WARNING")
+
+                # Create a SELL signal and execute
+                signal_data = {
+                    "asset_id": pos['asset_id'],
+                    "signal_type": "SELL",
+                    "entry_target": current_price,
+                    "status": "PENDING",
+                    "judge_reason": f"Trailing Stop: price ${current_price:,.2f} < stop ${trail_price:,.2f} (peak ${highest:,.2f})",
+                    "is_sim": is_sim
+                }
+                signal_entry = db.table("trade_signals").insert(signal_data).execute()
+                full_signal = signal_entry.data[0]
+                full_signal['assets'] = {'symbol': symbol}
+                full_signal['order_size'] = 0  # Not used for SELL (uses position qty)
+
+                success = sniper.execute_order(full_signal)
+                if success:
+                    log_activity("Sniper", f"Trailing Stop SELL executed for {symbol}", "SUCCESS")
+                else:
+                    log_activity("Sniper", f"Trailing Stop SELL failed for {symbol}", "ERROR")
+
+            time.sleep(0.15)  # Rate limit between ticker fetches
+    except Exception as e:
+        print(f"Trailing Stop Check Error: {e}")
+
 def run_farming_cycle():
     """PHASE 1: FARMING (Data Gathering) - Runs occasionally"""
     log_activity("System", "🚜 Starting Farming Cycle (Data Gathering)...")
@@ -249,6 +329,9 @@ def run_trading_cycle():
     if is_bot_stopped():
         log_activity("System", "⛔ Bot is STOPPED. Skipping trading cycle.", "WARNING")
         return
+
+    # 0. Check trailing stops BEFORE processing new signals
+    check_trailing_stops()
 
     # 1. Check if we need to Farm first
     try:

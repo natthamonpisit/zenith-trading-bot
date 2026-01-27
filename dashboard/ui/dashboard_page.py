@@ -206,7 +206,14 @@ def render_active_holdings(db, current_mode="PAPER"):
                         st.markdown(f"<span style='background-color:{mode_color}20; color:{mode_color}; padding: 2px 6px; border-radius: 4px; font-size: 0.7em;'>{mode_tag}</span>", unsafe_allow_html=True)
                     with c2: st.markdown(f"Entry: `${entry_price:,.2f}`")
                     with c3: st.markdown(f"Duration: `{dur_str}`")
-                    with c4: st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
+                    with c4:
+                        st.markdown(f"<h3 style='color:{color};'>${pnl:,.2f} ({pnl_pct:+.2f}%)</h3>", unsafe_allow_html=True)
+                        trail_price = p.get('trailing_stop_price')
+                        highest = p.get('highest_price_seen')
+                        if trail_price:
+                            st.caption(f"Trailing Stop: ${float(trail_price):,.2f} | Peak: ${float(highest):,.2f}")
+                        elif highest and float(highest) > entry_price:
+                            st.caption(f"Peak: ${float(highest):,.2f} (trailing not yet active)")
         else:
             # Empty State
             with st.container(border=True):

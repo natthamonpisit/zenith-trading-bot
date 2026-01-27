@@ -148,7 +148,9 @@ class SniperExecutor:
                    "entry_avg": fill_price,
                    "quantity": fill_amount,
                    "is_open": True,
-                   "is_sim": is_sim
+                   "is_sim": is_sim,
+                   "highest_price_seen": fill_price,
+                   "trailing_stop_price": None
                 }).execute()
             else:
                 # SELL: Position already closed above (sim) or record close for live
