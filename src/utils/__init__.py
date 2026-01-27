@@ -17,6 +17,7 @@ from .retry import retry_with_backoff, retry_db_operation
 from .cache import SimpleCache
 from .circuit_breaker import CircuitBreaker
 from .rate_limiter import RateLimiter
+from .logger import get_logger, log_execution_time, StructuredLogger
 
 def safe_execute(func, fallback=None, error_context=None):
     """Execute function and return fallback on any error"""
@@ -42,4 +43,8 @@ __all__ = [
     'CircuitBreaker',
     'RateLimiter',
     'safe_execute',
+    # Logging
+    'get_logger',
+    'log_execution_time',
+    'StructuredLogger',
 ]
