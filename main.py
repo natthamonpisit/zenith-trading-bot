@@ -137,7 +137,8 @@ def process_pair(pair, timeframe):
             'close': df['close'].iloc[-1]
         }
         
-        verdict = judge.evaluate(ai_data, tech_data, balance)
+        is_sim = (mode == "PAPER")
+        verdict = judge.evaluate(ai_data, tech_data, balance, is_sim=is_sim)
         ai_rec = analysis.get('recommendation', 'UNKNOWN')
         print(f"   - AI Recommendation: {ai_rec} (Confidence: {ai_data['confidence']}%)")
         print(f"   - Judge Verdict: {verdict.decision} → {verdict.reason}")
@@ -150,7 +151,7 @@ def process_pair(pair, timeframe):
             "entry_target": current_price,  # Actual entry price target
             "status": "PENDING" if verdict.decision == "APPROVED" else "REJECTED",
             "judge_reason": verdict.reason,
-            "is_sim": (mode == "PAPER")
+            "is_sim": is_sim
         }
         signal_entry = db.table("trade_signals").insert(signal_data).execute()
         

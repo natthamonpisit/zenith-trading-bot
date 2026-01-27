@@ -89,8 +89,8 @@ def render_dashboard_page(db):
              st.markdown("#### 📈 Active Market Chart")
              render_chart_section()
 
-        # UNIFIED HOLDINGS VIEW
-        render_active_holdings(db)
+        # UNIFIED HOLDINGS VIEW (filtered by current mode)
+        render_active_holdings(db, current_mode)
         
         # 6-ROLE LIVE STATUS
         render_role_cards(db)
@@ -165,10 +165,11 @@ def render_role_cards(db):
     except Exception as e:
         st.error(f"Team Status Error: {e}")
 
-def render_active_holdings(db):
-    # Fetch ALL active positions
+def render_active_holdings(db, current_mode="PAPER"):
+    # Fetch active positions for current mode only
+    is_sim = (current_mode == "PAPER")
     try:
-        open_pos = db.table("positions").select("*, assets(symbol)").eq("is_open", True).execute()
+        open_pos = db.table("positions").select("*, assets(symbol)").eq("is_open", True).eq("is_sim", is_sim).execute()
         if open_pos.data:
             st.markdown("#### ⚡ Assets in Progress")
             for p in open_pos.data:

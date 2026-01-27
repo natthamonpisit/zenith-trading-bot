@@ -124,27 +124,28 @@ class Judge:
             print(f"[Judge] Config load error: {e}")
             return {'RSI_THRESHOLD': 75, 'AI_CONF_THRESHOLD': 60}
 
-    def evaluate(self, ai_data, tech_data, portfolio_balance):
+    def evaluate(self, ai_data, tech_data, portfolio_balance, is_sim=False):
         """
         Core Logic:
-        0. Check Max Open Positions Limit.
+        0. Check Max Open Positions Limit (per mode).
         1. Check Hard Guardrails (RSI, Drawdown).
         2. Check AI Confidence.
         3. Calculate Position Size (Kelly or Fixed Risk).
         """
-        
+
         rsi = tech_data.get('rsi')
         ai_conf = ai_data.get('confidence')
         ai_rec = ai_data.get('recommendation')
-        
-        # --- 0. CHECK MAX POSITIONS LIMIT ---
+
+        # --- 0. CHECK MAX POSITIONS LIMIT (per mode) ---
         max_positions = int(self.config.get('MAX_OPEN_POSITIONS', 5))
-        
+
         try:
-            # Count current open positions
+            # Count open positions for current mode only
             open_positions = self.db.table("positions")\
                 .select("id")\
                 .eq("is_open", True)\
+                .eq("is_sim", is_sim)\
                 .execute()
             
             current_count = len(open_positions.data) if open_positions.data else 0
