@@ -119,7 +119,9 @@ def process_pair(pair, timeframe):
         }
         
         verdict = judge.evaluate(ai_data, tech_data, balance)
-        print(f"   - Judge Verdict: {verdict.decision} (Bal: ${balance:,.2f})")
+        ai_rec = analysis.get('recommendation', 'UNKNOWN')
+        print(f"   - AI Recommendation: {ai_rec} (Confidence: {ai_data['confidence']}%)")
+        print(f"   - Judge Verdict: {verdict.decision} → {verdict.reason}")
         
         # Log Signal to DB
         signal_data = {
