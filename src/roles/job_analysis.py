@@ -127,6 +127,7 @@ class Judge:
     def evaluate(self, ai_data, tech_data, portfolio_balance):
         """
         Core Logic:
+        0. Check Max Open Positions Limit.
         1. Check Hard Guardrails (RSI, Drawdown).
         2. Check AI Confidence.
         3. Calculate Position Size (Kelly or Fixed Risk).
@@ -135,6 +136,27 @@ class Judge:
         rsi = tech_data.get('rsi')
         ai_conf = ai_data.get('confidence')
         ai_rec = ai_data.get('recommendation')
+        
+        # --- 0. CHECK MAX POSITIONS LIMIT ---
+        max_positions = int(self.config.get('MAX_OPEN_POSITIONS', 5))
+        
+        try:
+            # Count current open positions
+            open_positions = self.db.table("positions")\
+                .select("id")\
+                .eq("is_open", True)\
+                .execute()
+            
+            current_count = len(open_positions.data) if open_positions.data else 0
+            
+            if current_count >= max_positions:
+                return TradeDecision(
+                    decision="REJECTED",
+                    size=0,
+                    reason=f"Position Limit: {current_count}/{max_positions} positions open"
+                )
+        except Exception as e:
+            print(f"[Judge] Error checking positions: {e}")
         
         # --- 1. THE HARD GUARDRAILS ---
         
@@ -181,7 +203,14 @@ class Judge:
         # Standardized Key: POSITION_SIZE_PCT
         # Default to 5% if not set
         pos_size_pct = float(self.config.get('POSITION_SIZE_PCT', 5.0)) / 100
-        size = portfolio_balance * pos_size_pct 
+        calculated_size = portfolio_balance * pos_size_pct
+        
+        # Apply MAX_RISK_PER_TRADE limit
+        max_risk_pct = float(self.config.get('MAX_RISK_PER_TRADE', 10.0)) / 100
+        max_risk_amount = portfolio_balance * max_risk_pct
+        
+        # Use the smaller of the two (more conservative)
+        size = min(calculated_size, max_risk_amount) 
         
         return TradeDecision(
             decision="APPROVED",
