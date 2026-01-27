@@ -35,10 +35,11 @@ class PriceSpy:
                 'options': options,
              })
              # Override URLs map manually to point to TH
+             # TEST RESULT: api/v3 is 404. api/v1 is 200. We MUST alias v3 -> v1.
              self.exchange.urls['api'] = {
-                'public': 'https://api.binance.th/api/v3', # Changed to v3
-                'private': 'https://api.binance.th/api/v3',
-                'v3': 'https://api.binance.th/api/v3', 
+                'public': 'https://api.binance.th/api/v1', 
+                'private': 'https://api.binance.th/api/v1',
+                'v3': 'https://api.binance.th/api/v1', # Alias v3 to v1
                 'v1': 'https://api.binance.th/api/v1',
                 'sapi': 'https://api.binance.th/sapi/v1',
              }
