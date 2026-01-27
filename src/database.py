@@ -1,5 +1,5 @@
 import os
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,7 +15,10 @@ class Database:
             if not url or not key:
                  print("WARNING: Supabase credentials missing.")
                  return None
-            cls._instance = create_client(url, key)
+            
+            # CRITICAL: Set timeout to prevent indefinite hangs
+            opts = ClientOptions(postgrest_client_timeout=20)
+            cls._instance = create_client(url, key, options=opts)
         return cls._instance
 
 def get_db() -> Client:
