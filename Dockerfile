@@ -36,4 +36,4 @@ ENV PYTHONUNBUFFERED=1
 COPY run.sh .
 RUN chmod +x run.sh
 
-CMD sh -c "streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0"
+CMD ["./run.sh"]
