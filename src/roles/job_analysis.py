@@ -18,7 +18,7 @@ class Strategist:
         self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
         self.db = get_db()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     def analyze_market(self, snapshot_id, asset_symbol, tech_data):
         """
         Sends market data to Gemini and expects a strict JSON response.

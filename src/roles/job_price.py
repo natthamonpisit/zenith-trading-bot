@@ -1,4 +1,5 @@
 import ccxt # Standard CCXT (Free Version)
+import time
 import pandas as pd
 try:
     import pandas_ta as ta # Financial Technical Analysis Library
@@ -208,7 +209,8 @@ class PriceSpy:
                             
                     except Exception as loop_e:
                         pass # Silent skip to avoid log spam
-                
+                    time.sleep(0.15)  # Rate limit: ~6 requests/sec to avoid Binance TH throttle
+
                 print(f"Spy: Successfully fetched {len(valid_pairs)} valid pairs individually.")
             else:
                 # Binance Global or other exchanges: Try batch fetch via CCXT
@@ -252,6 +254,7 @@ class PriceSpy:
                                 valid_pairs.append({'symbol': symbol, 'volume': vol})
                         except Exception as loop_e:
                             pass # Silent skip in fallback loop to avoid log spam
+                        time.sleep(0.15)  # Rate limit for fallback loop
 
             # Sort by Volume Descending
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)

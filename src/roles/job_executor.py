@@ -12,11 +12,9 @@ class SniperExecutor:
     THE SNIPER (Execution Engine)
     Role: Executes BUY/SELL orders on the exchange based on signals approved by The Judge.
     """
-    def __init__(self):
-        # We can actually reuse the Spy's exchange connection to avoid code duplication
-        # But for separation of concerns, let's init a new one or pass it in.
-        # For simplicity, let's create a new instance using the same robust logic as Spy
-        self.spy = PriceSpy() 
+    def __init__(self, spy_instance: PriceSpy = None):
+        # Reuse existing PriceSpy to avoid duplicate CCXT connections and rate limit issues
+        self.spy = spy_instance or PriceSpy()
         self.exchange = self.spy.exchange
         self.db = get_db()
 

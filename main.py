@@ -34,7 +34,7 @@ news_spy = NewsSpy()
 radar = Radar(price_spy) # Radar uses PriceSpy
 strategist = Strategist()
 judge = Judge()
-sniper = SniperExecutor()
+sniper = SniperExecutor(spy_instance=price_spy)
 
 TIMEFRAME = "1h"
 
@@ -88,7 +88,11 @@ def process_pair(pair, timeframe):
         else:
             asset_id = asset.data[0]['id']
 
-        analysis = strategist.analyze_market(None, pair, df.tail(5).to_dict()) # Send last 5 candles
+        # Send only relevant columns to reduce prompt size and avoid timestamp/NaN issues
+        tech_cols = ['close', 'open', 'high', 'low', 'volume', 'rsi', 'macd', 'signal', 'ema_20', 'ema_50']
+        available_cols = [c for c in tech_cols if c in df.columns]
+        tech_snapshot = df[available_cols].tail(5).fillna(0).round(6).to_dict()
+        analysis = strategist.analyze_market(None, pair, tech_snapshot)
         if not analysis: 
             print("❌ AI Analysis Failed")
             return
@@ -247,22 +251,21 @@ def run_trading_cycle():
         last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
         active_list = db.table("bot_config").select("value").eq("key", "ACTIVE_CANDIDATES").execute()
         
+        # Dynamic Farming Interval (User Request)
+        try:
+            interval_cfg = db.table("bot_config").select("value").eq("key", "FARMING_INTERVAL_HOURS").execute()
+            interval_hours = float(interval_cfg.data[0]['value']) if interval_cfg.data else 12.0
+        except Exception as e:
+            print(f"Farming interval config error: {e}")
+            interval_hours = 12.0
+        interval_seconds = interval_hours * 3600
+
         should_farm = False
         if not last_farm.data or not active_list.data:
             should_farm = True
         else:
-            # Dynamic Farming Interval (User Request)
-            try:
-                interval_cfg = db.table("bot_config").select("value").eq("key", "FARMING_INTERVAL_HOURS").execute()
-                interval_hours = float(interval_cfg.data[0]['value']) if interval_cfg.data else 12.0
-            except Exception as e:
-                print(f"Farming interval config error: {e}")
-                interval_hours = 12.0
-            
-            interval_seconds = interval_hours * 3600
-            
             elapsed = time.time() - float(last_farm.data[0]['value'])
-            if elapsed > interval_seconds: 
+            if elapsed > interval_seconds:
                 should_farm = True
                 
         if should_farm:

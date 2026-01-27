@@ -109,10 +109,12 @@ def render_farming_page(db):
     except Exception as e:
         st.error(f"Error fetching logs: {e}")
 
-    # Auto-Reload to check for completion
-    time.sleep(3)
-    
+    # Track rerun attempts to prevent infinite loop when bot is not running
+    if 'farming_rerun_count' not in st.session_state:
+        st.session_state.farming_rerun_count = 0
+
     # Check if Farming is Done (Check LAST_FARM_TIME)
+    farming_done = False
     try:
         last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
         if last_farm.data:
@@ -120,10 +122,23 @@ def render_farming_page(db):
             # If farm happened in last 5 minutes, we consider it "Just Done"
             if time.time() - last_ts < 300: # 5 min buffer
                  st.success("✅ Farming Complete! Redirecting...")
+                 st.session_state.farming_rerun_count = 0
                  time.sleep(1)
                  st.session_state.farming_complete = True
                  st.rerun()
+                 farming_done = True
     except Exception as e:
         print(f"Farming completion check error: {e}")
 
-    st.rerun()
+    if not farming_done:
+        st.session_state.farming_rerun_count += 1
+        max_retries = 40  # ~2 minutes of polling (40 x 3s)
+        if st.session_state.farming_rerun_count >= max_retries:
+            st.warning("Farming is taking longer than expected. The bot may not be running.")
+            if st.button("⏭️ Skip Farming & Enter Dashboard", use_container_width=True):
+                st.session_state.farming_complete = True
+                st.session_state.farming_rerun_count = 0
+                st.rerun()
+        else:
+            time.sleep(3)
+            st.rerun()
