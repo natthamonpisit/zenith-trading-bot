@@ -16,7 +16,7 @@ class HeadHunter:
         try:
             cfg = self.db.table("bot_config").select("*").execute()
             cfg_dict = {row['key']: row['value'] for row in cfg.data}
-            self.min_volume = float(cfg_dict.get("MIN_VOLUME", 10000000))
+            self.min_volume = float(cfg_dict.get("MIN_VOLUME", 50000))
             self.universe = cfg_dict.get("TRADING_UNIVERSE", "ALL").replace('"', '')
         except Exception as e:
             print(f"HeadHunter Config Error: {e}")

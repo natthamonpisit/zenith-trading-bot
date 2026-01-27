@@ -161,7 +161,7 @@ class Judge:
         # --- 1. THE HARD GUARDRAILS ---
         
         # A. RSI Veto (Always Active)
-        rsi_limit = float(self.config.get('RSI_THRESHOLD', self.config.get('RSI_OVERBOUGHT', 75)))
+        rsi_limit = float(self.config.get('RSI_THRESHOLD', 75))
         if ai_rec == 'BUY' and rsi > rsi_limit:
             return TradeDecision(decision="REJECTED", size=0, reason=f"Technical Veto: RSI {rsi:.1f} > {rsi_limit}")
             
@@ -180,10 +180,7 @@ class Judge:
                 return TradeDecision(decision="REJECTED", size=0, reason=f"Momentum Veto: MACD {macd:.4f} < Signal {signal:.4f}")
 
         # Rule: AI must be confident.
-        
-        # Rule: AI must be confident.
-        # Standardized Key: AI_CONFIDENCE_THRESHOLD
-        min_conf = float(self.config.get('AI_CONF_THRESHOLD', self.config.get('AI_MIN_CONFIDENCE', 60)))
+        min_conf = float(self.config.get('AI_CONF_THRESHOLD', 60))
         if ai_conf < min_conf:
              return TradeDecision(
                  decision="REJECTED", 

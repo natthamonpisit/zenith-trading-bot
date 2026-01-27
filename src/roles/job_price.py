@@ -274,7 +274,7 @@ class PriceSpy:
     def calculate_indicators(self, df: pd.DataFrame):
         """
         Calculates Technical Indicators using PANDAS-TA (Industry Standard Library).
-        Features: RSI, MACD, Bollinger Bands, EMA.
+        Features: RSI, MACD, Bollinger Bands, EMA, ATR.
         """
         if df is None or df.empty:
             return None
@@ -295,7 +295,10 @@ class PriceSpy:
                 df['signal'] = macd['MACDs_12_26_9']
                 # macd['MACDh_12_26_9'] is the histogram
                 
-            # 4. Bollinger Bands (20, 2)
+            # 4. ATR (Average True Range) - Volatility measure, length 14
+            df['atr'] = df.ta.atr(length=14)
+
+            # 5. Bollinger Bands (20, 2)
             # Returns BBL (Lower), BBM (Mid), BBU (Upper)
             bb = df.ta.bbands(length=20, std=2)
             if bb is not None:

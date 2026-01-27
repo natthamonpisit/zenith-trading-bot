@@ -93,13 +93,19 @@ CREATE TABLE IF NOT EXISTS bot_config (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Seed initial config
-INSERT INTO bot_config (key, value, description) 
-VALUES 
+-- Seed initial config (keys match Judge + Config Page conventions)
+INSERT INTO bot_config (key, value, description)
+VALUES
 ('MAX_RISK_PER_TRADE', '2.0', 'Percentage of portfolio risk per trade'),
-('RSI_OVERBOUGHT', '70', 'RSI threshold for overbought'),
-('RSI_OVERSOLD', '30', 'RSI threshold for oversold'),
-('AI_MIN_CONFIDENCE', '75', 'Minimum AI confidence to consider a trade')
+('RSI_THRESHOLD', '75', 'RSI threshold - reject BUY if RSI above this'),
+('AI_CONF_THRESHOLD', '60', 'Minimum AI confidence to consider a trade'),
+('POSITION_SIZE_PCT', '5.0', 'Position size as percentage of wallet'),
+('MAX_OPEN_POSITIONS', '5', 'Maximum number of concurrent open positions'),
+('TRADING_MODE', 'PAPER', 'PAPER or LIVE trading mode'),
+('TIMEFRAME', '1h', 'Default trading timeframe'),
+('MIN_VOLUME', '50000', 'Minimum 24h volume in USDT'),
+('TRADING_UNIVERSE', 'ALL', 'ALL, SAFE_LIST, or TOP_30'),
+('FARMING_INTERVAL_HOURS', '12', 'Hours between farming cycles')
 ON CONFLICT DO NOTHING;
 
 -- 8. System Logs

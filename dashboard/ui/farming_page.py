@@ -1,3 +1,4 @@
+import html
 import streamlit as st
 import time
 import pandas as pd
@@ -38,7 +39,7 @@ def render_farming_page(db):
         try:
              res = db.table("bot_config").select("value").eq("key", "BOT_STATUS_DETAIL").execute()
              status = res.data[0]['value'].replace('"', '') if res.data else "Initializing..."
-        except: status = "Connecting..."
+        except Exception: status = "Connecting..."
         
         status_ph.markdown(f"<div class='farming-status'>{status}</div>", unsafe_allow_html=True)
         
@@ -91,7 +92,7 @@ def render_farming_page(db):
             # Add 7 hours (Manual UTC+7 for simplicity or use pytz)
             thai_dt = dt + timedelta(hours=7)
             return thai_dt.strftime("%H:%M:%S")
-        except: return iso_str
+        except Exception: return iso_str
 
     # --- LIVE DEBUG CONSOLE ---
     st.subheader("📟 Live System Activity")
@@ -105,7 +106,7 @@ def render_farming_page(db):
                     icon = "🟢" if log['level'] == 'INFO' else "🔴" if log['level'] == 'ERROR' else "🟡"
                     # Use created_at for time display
                     time_str = to_thai_time(log.get('created_at', ''))
-                    st.markdown(f"<div style='font-family: monospace; font-size: 13px; padding: 4px; border-bottom: 1px solid #333;'>{icon} [{time_str}] <b>{log['role']}</b>: {log['message']}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-family: monospace; font-size: 13px; padding: 4px; border-bottom: 1px solid #333;'>{icon} [{html.escape(str(time_str))}] <b>{html.escape(str(log['role']))}</b>: {html.escape(str(log['message']))}</div>", unsafe_allow_html=True)
     except Exception as e:
         st.error(f"Error fetching logs: {e}")
 

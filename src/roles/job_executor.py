@@ -25,7 +25,7 @@ class SniperExecutor:
         """
         symbol = signal['assets']['symbol']
         side = signal['signal_type'] # BUY or SELL
-        amount = signal['entry_target'] # reusing field for amount for now, or calc size
+        amount = signal.get('order_size', signal['entry_target'])  # USDT amount from Judge
         
         # SAFETY CHECK: Double check with DB if signal is APPROVED
         # (Already filtered before calling this, but good practice)

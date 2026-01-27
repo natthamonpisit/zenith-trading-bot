@@ -3,7 +3,7 @@ import time
 import datetime
 import pytz
 from src.database import get_db
-from .utils import get_cfg, to_local_time
+from .utils import get_cfg, to_local_time, sanitize
 
 def render_sidebar(db):
     with st.sidebar:
@@ -84,16 +84,16 @@ def render_sidebar(db):
                     for log in console_logs.data:
                         try:
                             ts = to_local_time(log['created_at'], '%H:%M:%S')
-                        except: ts = "--:--"
+                        except Exception: ts = "--:--"
                         
                         c_map = {"ERROR": "#FF4B4B", "WARNING": "#FFA726", "SUCCESS": "#00FF94", "INFO": "#B0BEC5"}
                         color = c_map.get(log.get('level', 'INFO'), "#B0BEC5")
                         
                         st.markdown(f"""
                         <div style="font-family: 'Consolas', 'Courier New', monospace; font-size: 10px; line-height: 1.2; margin-bottom: 8px; border-left: 2px solid {color}; padding-left: 5px;">
-                            <span style="color: #666;">{ts}</span> <b style="color: #EEE;">{log.get('role', '?')}</b><br>
-                            <span style="color: {color}; word-wrap: break-word;">{log.get('message', '')}</span>
+                            <span style="color: #666;">{sanitize(ts)}</span> <b style="color: #EEE;">{sanitize(log.get('role', '?'))}</b><br>
+                            <span style="color: {color}; word-wrap: break-word;">{sanitize(log.get('message', ''))}</span>
                         </div>
                         """, unsafe_allow_html=True)
                 else: st.caption("No logs available")
-        except: st.caption("Console Disconnected")
+        except Exception: st.caption("Console Disconnected")

@@ -13,12 +13,12 @@ def render_status_page(db):
             try: 
                 db.table("bot_config").select("count", count='exact').limit(1).execute()
                 db_status = "✅ Connected"
-            except: db_status = "❌ Disconnected"
+            except Exception: db_status = "❌ Disconnected"
             
             try:
                 get_spy_instance().exchange.load_markets()
                 ex_status = "✅ Connected (Binance TH)"
-            except: ex_status = "❌ Error"
+            except Exception: ex_status = "❌ Error"
             
             st.markdown(f"**Database:** {db_status}")
             st.markdown(f"**Exchange:** {ex_status}")

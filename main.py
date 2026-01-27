@@ -89,7 +89,7 @@ def process_pair(pair, timeframe):
             asset_id = asset.data[0]['id']
 
         # Send only relevant columns to reduce prompt size and avoid timestamp/NaN issues
-        tech_cols = ['close', 'open', 'high', 'low', 'volume', 'rsi', 'macd', 'signal', 'ema_20', 'ema_50']
+        tech_cols = ['close', 'open', 'high', 'low', 'volume', 'rsi', 'macd', 'signal', 'ema_20', 'ema_50', 'atr']
         available_cols = [c for c in tech_cols if c in df.columns]
         tech_snapshot = df[available_cols].tail(5).fillna(0).round(6).to_dict()
         analysis = strategist.analyze_market(None, pair, tech_snapshot)
@@ -143,10 +143,11 @@ def process_pair(pair, timeframe):
         print(f"   - Judge Verdict: {verdict.decision} → {verdict.reason}")
         
         # Log Signal to DB
+        current_price = float(df['close'].iloc[-1])
         signal_data = {
             "asset_id": asset_id,
             "signal_type": analysis.get('recommendation'), # BUY/SELL
-            "entry_target": verdict.size, # Using size as entry amount for simplicity
+            "entry_target": current_price,  # Actual entry price target
             "status": "PENDING" if verdict.decision == "APPROVED" else "REJECTED",
             "judge_reason": verdict.reason,
             "is_sim": (mode == "PAPER")
@@ -160,7 +161,8 @@ def process_pair(pair, timeframe):
             # Use full signal object
             full_signal = signal_entry.data[0]
             full_signal['assets'] = {'symbol': pair} # Manual hydrate for simplicity
-            
+            full_signal['order_size'] = verdict.size  # USDT amount from Judge
+
             success = sniper.execute_order(full_signal)
             if success:
                  log_activity("Sniper", f"✅ Order Executed for {pair}!", "SUCCESS")
@@ -225,9 +227,10 @@ def run_farming_cycle():
         # Complete Farming Log
         if farm_id:
              try:
+                 from datetime import datetime, timezone
                  db.table("farming_history").update({
                      "status": "COMPLETED",
-                     "end_time": "now()",
+                     "end_time": datetime.now(timezone.utc).isoformat(),
                      "candidates_found": len(symbols),
                      "logs": f"Farmed {len(symbols)} coins."
                  }).eq("id", farm_id).execute()

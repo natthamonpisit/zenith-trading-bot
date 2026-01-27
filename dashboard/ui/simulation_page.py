@@ -42,7 +42,7 @@ def render_simulation_page(db):
                 try: 
                     ticker = get_spy_instance().exchange.fetch_ticker(symbol)
                     curr_price = ticker['last']
-                except: curr_price = entry_price
+                except Exception: curr_price = entry_price
                 
                 try:
                     # Handle various timestamp formats from database

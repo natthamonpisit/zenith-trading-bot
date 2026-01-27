@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 import pytz
-from .utils import get_spy_instance, get_cfg, to_local_time
+from .utils import get_spy_instance, get_cfg, to_local_time, sanitize
 
 def render_dashboard_page(db):
     current_mode = get_cfg(db, "TRADING_MODE", "PAPER").replace('"', '')
@@ -43,9 +43,9 @@ def render_dashboard_page(db):
                  for log in logs.data:
                      ts = to_local_time(log['created_at'], '%H:%M:%S')
                      color = "red" if log['level'] == "ERROR" else "orange" if log['level'] == "WARNING" else "#00FF94" if log['level'] == "SUCCESS" else "#ccc"
-                     st.markdown(f"<code style='color:#666'>{ts}</code> **{log['role']}**: <span style='color:{color}'>{log['message']}</span>", unsafe_allow_html=True)
+                     st.markdown(f"<code style='color:#666'>{sanitize(ts)}</code> **{sanitize(log['role'])}**: <span style='color:{color}'>{sanitize(log['message'])}</span>", unsafe_allow_html=True)
              else: st.info("Waiting for bot activity...")
-        except: st.caption("Log Connection Pending...")
+        except Exception: st.caption("Log Connection Pending...")
 
     main_col, right_col = st.columns([3, 1])
 
@@ -71,7 +71,7 @@ def render_dashboard_page(db):
                     sim = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
                     bal = sim.data[0]['balance'] if sim.data else 1000.0
                     st.metric("Mock Balance", f"${bal:,.2f}")
-            except: st.error("Connection Error")
+            except Exception: st.error("Connection Error")
 
         with st.container(border=True):
             st.markdown("##### 🔭 Market Watch")
@@ -184,7 +184,7 @@ def render_active_holdings(db):
                 try: 
                     ticker = get_spy_instance().exchange.fetch_ticker(symbol)
                     curr_price = ticker['last']
-                except: curr_price = entry_price
+                except Exception: curr_price = entry_price
                 
                 if 'created_at' in p:
                     utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
