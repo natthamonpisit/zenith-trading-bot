@@ -44,6 +44,24 @@ if not st.session_state.entered:
             st.rerun()
     st.stop()
 
+from dashboard.ui.farming_page import render_farming_page
+import time
+
+# --- GATEKEEPER (Farming Check) ---
+# Check if data is fresh (within 12 hours)
+is_fresh = False
+try:
+    last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
+    if last_farm.data:
+        elapsed = time.time() - float(last_farm.data[0]['value'])
+        if elapsed < 43200: # 12 Hours
+            is_fresh = True
+except: pass
+
+if not is_fresh and not st.session_state.get('farming_complete'):
+    render_farming_page(db)
+    st.stop() # Stop here, don't show dashboard
+
 # --- MODULE ROUTING ---
 render_sidebar(db)
 
