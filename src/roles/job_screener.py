@@ -44,7 +44,13 @@ class HeadHunter:
         print(f"   (Mode: {self.universe}, Min Vol: ${self.min_volume:,.0f})")
 
         for coin in candidates:
-            symbol = coin['symbol']
+            # Robustness: Handle if coin is just a string (legacy fallback)
+            if isinstance(coin, str):
+                symbol = coin
+                vol = 0
+            else:
+                symbol = coin.get('symbol', 'UNKNOWN')
+                vol = coin.get('volume', 0) # Key from Spy is 'volume'
             vol = coin.get('volume', 0) # Key from Spy is 'volume'
             status = f_data.get(symbol, 'NEUTRAL')
             

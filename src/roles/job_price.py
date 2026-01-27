@@ -180,11 +180,11 @@ class PriceSpy:
                 return top_candidates # Returns List of Dicts [{'symbol': 'BTC/USDT', 'volume': 123}, ...]
             else:
                  # Ultimate Fallback
-                 return ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+                 return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
 
         except Exception as e:
             print(f"Spy Top Assets Error: {e}")
-            return ["BTC/USDT", "ETH/USDT"] # Fallback
+            return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}] # Fallback
 
     def calculate_indicators(self, df: pd.DataFrame):
         """
