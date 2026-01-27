@@ -8,6 +8,7 @@ from .utils import get_cfg, to_local_time
 def render_sidebar(db):
     with st.sidebar:
         st.markdown("### 🤖 Zenith OS")
+        tz_th = pytz.timezone('Asia/Bangkok')
         system_time = datetime.datetime.now(tz_th).strftime('%H:%M:%S')
         st.caption(f"System Time (TH): {system_time}")
         
