@@ -15,4 +15,7 @@ __pycache__/
 # Streamlit
 .streamlit/
 !/.streamlit/config.toml
+# CRITICAL: Never commit secrets!
+!/.streamlit/secrets.toml.example
+.streamlit/secrets.toml
 *.log

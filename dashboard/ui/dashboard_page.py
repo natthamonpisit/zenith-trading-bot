@@ -5,7 +5,20 @@ from datetime import datetime
 import pytz
 from .utils import get_spy_instance, get_cfg, to_local_time, sanitize
 
+# Authentication
+from dashboard.ui.auth import check_password, show_logout_button
+
 def render_dashboard_page(db):
+    """Main dashboard page with authentication"""
+    
+    # 🔐 AUTHENTICATION GUARD
+    if not check_password():
+        st.stop()  # Stop execution if not authenticated
+    
+    # Show logout button in sidebar
+    show_logout_button()
+    
+    # Continue with dashboard rendering
     current_mode = get_cfg(db, "TRADING_MODE", "PAPER").replace('"', '')
 
     c1, c2 = st.columns([3, 1])

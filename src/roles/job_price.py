@@ -30,8 +30,13 @@ class PriceSpy:
             timeout=60.0
         )
         
+        
         # Cache for ticker data (short TTL to reduce API calls)
         self.ticker_cache = SimpleCache(default_ttl=5.0, max_size=500)
+        
+        # Rate limiter: Binance allows 1200 requests/minute
+        # Set to 1000 to be safe with buffer
+        self.rate_limiter = RateLimiter(max_calls=1000, period=60.0)
         
         # Initialize basic CCXT instance without loading markets yet
         options = {
