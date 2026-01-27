@@ -164,7 +164,10 @@ def run_farming_cycle():
     candidates = head_hunter.screen_market(candidates_raw)
     
     if not candidates:
-        log_activity("System", "Farming yielded no crops (candidates). Retrying next cycle.", "WARNING")
+        msg = "Farming yielded no crops (candidates). Retrying next cycle."
+        log_activity("System", msg, "WARNING")
+        update_status_db(f"❌ {msg}")
+        
         # Update Log as Failed
         if farm_id:
              try: db.table("farming_history").update({"status": "FAILED", "logs": "No candidates found"}).eq("id", farm_id).execute()

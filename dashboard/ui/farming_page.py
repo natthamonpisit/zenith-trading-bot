@@ -87,14 +87,15 @@ def render_farming_page(db):
     # --- LIVE DEBUG CONSOLE ---
     st.subheader("📟 Live System Activity")
     try:
-        # Fetch 20 recent logs
-        logs = db.table("system_logs").select("*").order("timestamp", desc=True).limit(50).execute()
+        # Fetch 50 recent logs (Use correct column 'created_at')
+        logs = db.table("system_logs").select("*").order("created_at", desc=True).limit(50).execute()
         if logs.data:
             # Container with fixed height for scrolling
             with st.container(height=300):
                 for log in logs.data:
                     icon = "🟢" if log['level'] == 'INFO' else "🔴" if log['level'] == 'ERROR' else "🟡"
-                    time_str = to_thai_time(log['timestamp'])
+                    # Use created_at for time display
+                    time_str = to_thai_time(log.get('created_at', ''))
                     st.markdown(f"<div style='font-family: monospace; font-size: 13px; padding: 4px; border-bottom: 1px solid #333;'>{icon} [{time_str}] <b>{log['role']}</b>: {log['message']}</div>", unsafe_allow_html=True)
     except Exception as e:
         st.error(f"Error fetching logs: {e}")

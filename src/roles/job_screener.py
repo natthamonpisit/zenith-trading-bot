@@ -74,9 +74,6 @@ class HeadHunter:
                  print(f"HeadHunter: Rejected {symbol} (Not Whitelisted)")
                  continue
 
-            # C. Universe Check
-            if self.universe == "SAFE_LIST" and status != 'WHITELIST':
-                continue
             
             qualified.append(coin)
             
