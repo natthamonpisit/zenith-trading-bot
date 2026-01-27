@@ -44,7 +44,19 @@ def render_simulation_page(db):
                     curr_price = ticker['last']
                 except: curr_price = entry_price
                 
-                utc_entry = datetime.fromisoformat(p['created_at'].replace('Z', '+00:00'))
+                try:
+                    # Handle various timestamp formats from database
+                    timestamp_str = p['created_at'].replace('Z', '+00:00')
+                    # Remove timezone for parsing, then add it back
+                    if '+' in timestamp_str:
+                        dt_part, tz_part = timestamp_str.rsplit('+', 1)
+                        utc_entry = datetime.fromisoformat(dt_part).replace(tzinfo=pytz.utc)
+                    else:
+                        utc_entry = datetime.fromisoformat(timestamp_str).replace(tzinfo=pytz.utc)
+                except Exception as parse_err:
+                    print(f"Timestamp parse error: {parse_err}, using current time")
+                    utc_entry = datetime.now(pytz.utc)
+                    
                 local_entry = utc_entry.astimezone(pytz.timezone('Asia/Bangkok'))
                 duration = datetime.now(pytz.utc) - utc_entry
                 
