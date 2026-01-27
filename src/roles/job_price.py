@@ -42,6 +42,10 @@ class PriceSpy:
                 'v3': 'https://api.binance.th/api/v1', # Alias v3 to v1
                 'v1': 'https://api.binance.th/api/v1',
                 'sapi': 'https://api.binance.th/sapi/v1',
+                'fapiPublic': 'https://api.binance.th/api/v1', # Polyfill to satisfy CCXT validation
+                'fapiPrivate': 'https://api.binance.th/api/v1',
+                'dapiPublic': 'https://api.binance.th/api/v1',
+                'dapiPrivate': 'https://api.binance.th/api/v1',
              }
              # Strictly disable all non-spot features to prevent 404 probes
              self.exchange.has['fetchMarginPairs'] = False
