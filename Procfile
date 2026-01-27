@@ -1,3 +1,3 @@
-worker: streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
+worker: bash start_dashboard.sh
 web: python main.py
 
