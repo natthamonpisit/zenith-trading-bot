@@ -142,6 +142,7 @@ class SniperExecutor:
             if side.upper() == 'BUY':
                 # BUY: Create a new open position
                 # Map BUY→LONG to match DB CHECK constraint (side IN ('LONG','SHORT'))
+                entry_atr = signal.get('entry_atr', 0.0)  # Get ATR from signal
                 self.db.table("positions").insert({
                    "asset_id": signal['asset_id'],
                    "side": "LONG",
@@ -150,7 +151,8 @@ class SniperExecutor:
                    "is_open": True,
                    "is_sim": is_sim,
                    "highest_price_seen": fill_price,
-                   "trailing_stop_price": None
+                   "trailing_stop_price": None,
+                   "entry_atr": entry_atr  # Store ATR for trailing stop
                 }).execute()
             else:
                 # SELL: Position already closed above (sim) or record close for live

@@ -145,10 +145,13 @@ def process_pair(pair, timeframe):
         
         # Log Signal to DB
         current_price = float(df['close'].iloc[-1])
+        current_atr = float(df['atr'].iloc[-1]) if 'atr' in df.columns and not pd.isna(df['atr'].iloc[-1]) else 0.0
+        
         signal_data = {
             "asset_id": asset_id,
             "signal_type": analysis.get('recommendation'), # BUY/SELL
             "entry_target": current_price,  # Actual entry price target
+            "entry_atr": current_atr,  # Store ATR at signal creation
             "status": "PENDING" if verdict.decision == "APPROVED" else "REJECTED",
             "judge_reason": verdict.reason,
             "is_sim": is_sim
@@ -188,8 +191,17 @@ def check_trailing_stops():
         if not trail_enabled_res.data or str(trail_enabled_res.data[0]['value']).replace('"', '').strip().lower() != 'true':
             return
 
+        # ATR-based or Fixed % trailing stop
+        use_atr_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_USE_ATR").execute()
+        use_atr = str(use_atr_res.data[0]['value']).replace('"', '').strip().lower() == 'true' if use_atr_res.data else False
+        
+        # Config for Fixed % mode
         trail_pct_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_PCT").execute()
         trail_pct = float(str(trail_pct_res.data[0]['value']).replace('"', '').strip()) / 100 if trail_pct_res.data else 0.03
+        
+        # Config for ATR mode
+        atr_multiplier_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_ATR_MULTIPLIER").execute()
+        atr_multiplier = float(str(atr_multiplier_res.data[0]['value']).replace('"', '').strip()) if atr_multiplier_res.data else 2.0
 
         min_profit_res = db.table("bot_config").select("value").eq("key", "MIN_PROFIT_TO_TRAIL_PCT").execute()
         min_profit_pct = float(str(min_profit_res.data[0]['value']).replace('"', '').strip()) / 100 if min_profit_res.data else 0.01
@@ -225,8 +237,24 @@ def check_trailing_stops():
             if profit_pct < min_profit_pct:
                 continue  # Not enough profit to activate trailing stop
 
-            # Calculate trailing stop price
-            trail_price = highest * (1 - trail_pct)
+            # Calculate trailing stop price (ATR-based or Fixed %)
+            if use_atr:
+                # ATR-based: More dynamic, adjusts to volatility
+                position_atr = pos.get('entry_atr')  # ATR at entry time
+                if position_atr and float(position_atr) > 0:
+                    atr_value = float(position_atr)
+                    # Trail by ATR * multiplier below highest price
+                    trail_distance = atr_value * atr_multiplier
+                    trail_price = highest - trail_distance
+                    print(f"[ATR Trail] {symbol}: ATR={atr_value:.2f}, Multiplier={atr_multiplier}, Distance=${trail_distance:.2f}")
+                else:
+                    # Fallback to fixed % if no ATR data
+                    trail_price = highest * (1 - trail_pct)
+                    print(f"[Fixed Trail Fallback] {symbol}: No ATR data, using {trail_pct*100}%")
+            else:
+                # Fixed percentage mode (original behavior)
+                trail_price = highest * (1 - trail_pct)
+                print(f"[Fixed Trail] {symbol}: {trail_pct*100}% below peak")
 
             # Update trailing_stop_price in DB (for dashboard visibility)
             db.table("positions").update({"trailing_stop_price": trail_price}).eq("id", pos['id']).execute()
