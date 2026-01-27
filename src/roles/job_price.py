@@ -202,12 +202,13 @@ class PriceSpy:
             # Sort by Volume Descending
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
             
-            if callback: callback(f"Radar: Found {len(valid_pairs)} valid candidates.")
-            print(f"Spy: Found {len(valid_pairs)} valid candidates.")
-            return valid_pairs
-            else:
-                 # Ultimate Fallback
-                 return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
+            if valid_pairs:
+                if callback: callback(f"Radar: Found {len(valid_pairs)} valid candidates.")
+                print(f"Spy: Found {len(valid_pairs)} valid candidates.")
+                return valid_pairs
+            
+            # Ultimate Fallback
+            return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
 
         except Exception as e:
             print(f"Spy Top Assets Error: {e}")
