@@ -137,27 +137,29 @@ class Judge:
         ai_conf = ai_data.get('confidence')
         ai_rec = ai_data.get('recommendation')
 
-        # --- 0. CHECK MAX POSITIONS LIMIT (per mode) ---
-        max_positions = int(self.config.get('MAX_OPEN_POSITIONS', 5))
+        # --- 0. CHECK MAX POSITIONS LIMIT (per mode, BUY only) ---
+        # SELL orders are always allowed so users can reduce holdings
+        if ai_rec != 'SELL':
+            max_positions = int(self.config.get('MAX_OPEN_POSITIONS', 5))
 
-        try:
-            # Count open positions for current mode only
-            open_positions = self.db.table("positions")\
-                .select("id")\
-                .eq("is_open", True)\
-                .eq("is_sim", is_sim)\
-                .execute()
-            
-            current_count = len(open_positions.data) if open_positions.data else 0
-            
-            if current_count >= max_positions:
-                return TradeDecision(
-                    decision="REJECTED",
-                    size=0,
-                    reason=f"Position Limit: {current_count}/{max_positions} positions open"
-                )
-        except Exception as e:
-            print(f"[Judge] Error checking positions: {e}")
+            try:
+                # Count open positions for current mode only
+                open_positions = self.db.table("positions")\
+                    .select("id")\
+                    .eq("is_open", True)\
+                    .eq("is_sim", is_sim)\
+                    .execute()
+
+                current_count = len(open_positions.data) if open_positions.data else 0
+
+                if current_count >= max_positions:
+                    return TradeDecision(
+                        decision="REJECTED",
+                        size=0,
+                        reason=f"Position Limit: {current_count}/{max_positions} positions open"
+                    )
+            except Exception as e:
+                print(f"[Judge] Error checking positions: {e}")
         
         # --- 1. THE HARD GUARDRAILS ---
         
