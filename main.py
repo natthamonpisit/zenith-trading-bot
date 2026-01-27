@@ -212,9 +212,16 @@ def run_trading_cycle():
         if not last_farm.data or not active_list.data:
             should_farm = True
         else:
-            # Farm every 12 hours (43200 sec)
+            # Dynamic Farming Interval (User Request)
+            try:
+                interval_cfg = db.table("bot_config").select("value").eq("key", "FARMING_INTERVAL_HOURS").execute()
+                interval_hours = float(interval_cfg.data[0]['value']) if interval_cfg.data else 12.0
+            except: interval_hours = 12.0
+            
+            interval_seconds = interval_hours * 3600
+            
             elapsed = time.time() - float(last_farm.data[0]['value'])
-            if elapsed > 43200: 
+            if elapsed > interval_seconds: 
                 should_farm = True
                 
         if should_farm:
@@ -237,7 +244,10 @@ def run_trading_cycle():
             timeframe = str(tf.data[0]['value']).replace('"', '')
         except: timeframe = "1h"
 
-        next_farm_in = int((43200 - (time.time() - float(last_farm.data[0]['value']))) / 3600)
+        # Calculate Remaining Time dynamically
+        remaining_seconds = interval_seconds - (time.time() - float(last_farm.data[0]['value']))
+        next_farm_in = max(0, int(remaining_seconds / 3600))
+        
         update_status_db(f"🔫 Sniper Mode: Hunting {len(candidates)} pairs (Next Farm: {next_farm_in}h)")
         
         for i, symbol in enumerate(candidates):
