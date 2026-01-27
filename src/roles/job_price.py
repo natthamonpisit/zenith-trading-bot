@@ -36,9 +36,9 @@ class PriceSpy:
              })
              # Override URLs map manually to point to TH
              self.exchange.urls['api'] = {
-                'public': 'https://api.binance.th/api/v1',
-                'private': 'https://api.binance.th/api/v1',
-                'v3': 'https://api.binance.th/api/v1', 
+                'public': 'https://api.binance.th/api/v3', # Changed to v3
+                'private': 'https://api.binance.th/api/v3',
+                'v3': 'https://api.binance.th/api/v3', 
                 'v1': 'https://api.binance.th/api/v1',
                 'sapi': 'https://api.binance.th/sapi/v1',
              }
@@ -138,7 +138,7 @@ class PriceSpy:
              print(f"Spy (Balance) Error: {e}")
              return None
 
-    def get_top_symbols(self, limit=30, callback=None):
+    def get_top_symbols(self, limit=30, callback=None, logger=None):
         """Fetches top USDT pairs by 24h Volume"""
         try:
             if not self.exchange.markets:
@@ -189,6 +189,7 @@ class PriceSpy:
                 msg = f"Radar Error (Batch): {e}. Switching to Loop."
                 print(msg)
                 if callback: callback(msg)
+                if logger: logger("Spy", msg, "WARNING") # Log to system_logs
                 
                 for i, symbol in enumerate(target_list):
                     if callback and i % 5 == 0: callback(f"Radar: Scanning {symbol} ({i+1}/{len(target_list)})")

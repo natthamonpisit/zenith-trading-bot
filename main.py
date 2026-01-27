@@ -155,7 +155,7 @@ def run_farming_cycle():
         farm_id = f_res.data[0]['id']
     except: pass
     
-    candidates_raw = radar.scan_market(callback=update_status_db) 
+    candidates_raw = radar.scan_market(callback=update_status_db, logger=log_activity) 
     
     last_heartbeat = time.time()
 
