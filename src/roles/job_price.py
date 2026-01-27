@@ -180,62 +180,11 @@ class PriceSpy:
             print(f"Spy: Scanning {len(target_list)} candidates...")
             if callback: callback(f"Radar: Bulk scanning {len(target_list)} pairs...")
 
-            try:
-                # Binance TH requires native API call (CCXT's fetch_tickers doesn't work)
-                if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
-                    print(f"Spy: Fetching all tickers from Binance TH API...")
-                    import requests
-                    
-                    # Use native Binance TH API endpoint
-                    response = requests.get('https://api.binance.th/api/v1/ticker/24hr', timeout=10)
-                    response.raise_for_status()
-                    tickers_data = response.json()
-                    
-                    # Convert to dict format {symbol: ticker_data}
-                    all_tickers = {}
-                    for ticker in tickers_data:
-                        # Convert BTCUSDT -> BTC/USDT format
-                        raw_symbol = ticker['symbol']
-                        if raw_symbol.endswith('USDT'):
-                            base = raw_symbol[:-4]
-                            quote = raw_symbol[-4:]
-                            symbol = f"{base}/{quote}"
-                            
-                            all_tickers[symbol] = {
-                                'symbol': symbol,
-                                'quoteVolume': float(ticker.get('quoteVolume', 0)),
-                                'last': float(ticker.get('lastPrice', 0)),
-                                'baseVolume': float(ticker.get('volume', 0))
-                            }
-                    
-                    print(f"Spy: Loaded {len(all_tickers)} tickers from Binance TH API.")
-                else:
-                    # Binance Global or other exchanges: Use CCXT
-                    print(f"Spy: Fetching all market tickers via CCXT...")
-                    all_tickers = self.exchange.fetch_tickers()
-                
-                # Filter only symbols in our target_list
-                for symbol in target_list:
-                    if symbol in all_tickers:
-                        ticker = all_tickers[symbol]
-                        try:
-                            vol = 0
-                            if 'quoteVolume' in ticker and ticker['quoteVolume']:
-                                vol = float(ticker['quoteVolume'])
-                            elif 'baseVolume' in ticker and 'last' in ticker:
-                                vol = float(ticker['baseVolume']) * float(ticker['last'])
-                            
-                            if vol > 0:
-                                valid_pairs.append({'symbol': symbol, 'volume': vol})
-                        except Exception as e:
-                            print(f"Spy: Ticker parse error for {symbol}: {e}")
-                
-                print(f"Spy: Successfully processed {len(valid_pairs)} valid pairs from batch fetch.")
-                        
-            except Exception as e:
-                # Fallback to loop if batch fetch completely fails
-                if logger: logger("Spy", f"Batch Fetch Failed: {e}. Switching to Loop for {len(target_list)} items.", "WARNING")
-                print(f"Spy: Batch fetch failed, falling back to individual requests...")
+            # Binance TH doesn't support batch ticker fetch (requires symbol parameter)
+            # Skip batch fetch and go straight to individual requests
+            if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
+                print(f"Spy: Binance TH detected - using individual ticker requests...")
+                if logger: logger("Spy", f"Binance TH: Fetching {len(target_list)} tickers individually (no batch endpoint).", "INFO")
                 
                 for symbol in target_list:
                     try:
@@ -249,7 +198,51 @@ class PriceSpy:
                         if vol > 0: 
                             valid_pairs.append({'symbol': symbol, 'volume': vol})
                     except Exception as loop_e:
-                        pass # Silent skip in fallback loop to avoid log spam
+                        pass # Silent skip to avoid log spam
+                
+                print(f"Spy: Successfully fetched {len(valid_pairs)} valid pairs individually.")
+            else:
+                # Binance Global or other exchanges: Try batch fetch via CCXT
+                try:
+                    print(f"Spy: Fetching all market tickers via CCXT...")
+                    all_tickers = self.exchange.fetch_tickers()
+                    
+                    # Filter only symbols in our target_list
+                    for symbol in target_list:
+                        if symbol in all_tickers:
+                            ticker = all_tickers[symbol]
+                            try:
+                                vol = 0
+                                if 'quoteVolume' in ticker and ticker['quoteVolume']:
+                                    vol = float(ticker['quoteVolume'])
+                                elif 'baseVolume' in ticker and 'last' in ticker:
+                                    vol = float(ticker['baseVolume']) * float(ticker['last'])
+                                
+                                if vol > 0:
+                                    valid_pairs.append({'symbol': symbol, 'volume': vol})
+                            except Exception as e:
+                                print(f"Spy: Ticker parse error for {symbol}: {e}")
+                    
+                    print(f"Spy: Successfully processed {len(valid_pairs)} valid pairs from batch fetch.")
+                            
+                except Exception as e:
+                    # Fallback to loop if batch fetch completely fails
+                    if logger: logger("Spy", f"Batch Fetch Failed: {e}. Switching to Loop for {len(target_list)} items.", "WARNING")
+                    print(f"Spy: Batch fetch failed, falling back to individual requests...")
+                    
+                    for symbol in target_list:
+                        try:
+                            ticker = self.exchange.fetch_ticker(symbol)
+                            vol = 0
+                            if 'quoteVolume' in ticker and ticker['quoteVolume']:
+                                vol = float(ticker['quoteVolume'])
+                            elif 'baseVolume' in ticker and 'last' in ticker:
+                                vol = float(ticker['baseVolume']) * float(ticker['last'])
+                            
+                            if vol > 0: 
+                                valid_pairs.append({'symbol': symbol, 'volume': vol})
+                        except Exception as loop_e:
+                            pass # Silent skip in fallback loop to avoid log spam
 
             # Sort by Volume Descending
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
