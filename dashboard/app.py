@@ -1,6 +1,10 @@
 import streamlit as st
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables (for local dev)
+load_dotenv()
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -20,23 +24,14 @@ from dashboard.ui.fundamental_page import render_fundamental_page
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
 db = get_db()
 
-# Dashboard password from environment variable (default for dev only)
-DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "zenith2026")
+# --- AUTHENTICATION ---
+from dashboard.ui.auth import check_password, show_logout_button
 
-# --- CUSTOM CSS ---
-st.markdown("""
-<style>
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0E1117; }
-    div[data-testid="stVerticalBlockBorderWrapper"] { background-color: #1c1c1e; border-radius: 12px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); border: 1px solid #2c2c2e; }
-    h1, h2, h3, h4, h5 { color: #fff !important; font-weight: 600; }
-    section[data-testid="stSidebar"] { background-color: #121212; border-right: 1px solid #333; }
-</style>
-""", unsafe_allow_html=True)
+if not check_password():
+    st.stop()
 
-# --- SESSION STATE ---
-if 'page' not in st.session_state: st.session_state.page = 'Dashboard'
-if 'entered' not in st.session_state: st.session_state.entered = True  # Auto-enter for local
-if 'authenticated' not in st.session_state: st.session_state.authenticated = True  # Auto-auth for local
+# Show logout button in sidebar
+show_logout_button()
 
 
 # GATEKEEPER removed for local development - direct access enabled
