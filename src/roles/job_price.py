@@ -9,7 +9,8 @@ import os
 from dotenv import load_dotenv
 
 # Error handling utilities
-from src.utils import CircuitBreaker, SimpleCache, ExternalAPIError, retry_with_backoff
+from src.utils import CircuitBreaker, SimpleCache, ExternalAPIError, retry_with_backoff, RateLimiter
+from src.utils.logger import get_logger, log_execution_time
 
 load_dotenv()
 
@@ -19,6 +20,9 @@ class PriceSpy:
     Role: Fetches market data (OHLCV) from the exchange and calculates basic technical indicators.
     """
     def __init__(self, exchange_id='binance'):
+        # Initialize logger
+        self.logger = get_logger(__name__, role="Spy")
+        
         self.api_key = os.environ.get("BINANCE_API_KEY")
         self.secret = os.environ.get("BINANCE_SECRET")
         self.api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
