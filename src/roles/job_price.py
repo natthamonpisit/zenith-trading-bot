@@ -172,17 +172,21 @@ class PriceSpy:
                      callback(f"Radar: Scanning {symbol} ({i+1}/{len(target_list)})")
 
                 try:
-                    # Symbol format for API: BTC/USDT -> BTCUSDT
-                    api_symbol = symbol.replace("/", "")
-                    url = f"https://api.binance.th/api/v1/ticker/24hr?symbol={api_symbol}"
-                    res = requests.get(url, timeout=2).json()
+                    # Use CCXT for unified standardized fetching (Handles headers/rate-limits)
+                    ticker = self.exchange.fetch_ticker(symbol)
                     
-                    if 'quoteVolume' in res:
-                        valid_pairs.append({
-                            'symbol': symbol,
-                            'volume': float(res['quoteVolume'])
-                        })
-                except: continue
+                    if 'quoteVolume' in ticker:
+                        vol = float(ticker['quoteVolume'])
+                        # Append dict
+                        valid_pairs.append({'symbol': symbol, 'volume': vol})
+                    else:
+                        # Fallback
+                        vol = float(ticker.get('baseVolume', 0)) * float(ticker.get('last', 0))
+                        if vol > 0: valid_pairs.append({'symbol': symbol, 'volume': vol})
+
+                except Exception as e:
+                    print(f"Spy Error ({symbol}): {e}")
+                    pass
             
             # Sort and Return Top N
             if valid_pairs:
