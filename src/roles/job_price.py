@@ -149,22 +149,25 @@ class PriceSpy:
             if not self.exchange.markets:
                 self.load_markets_custom()
 
-            # Expanded Candidate List for Farming Mode
-            # ideally this should be dynamic from API, but for now we list popular ones
-            candidates = [
-                "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
-                "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "POL/USDT",
-                "LTC/USDT", "TRX/USDT", "AVAX/USDT", "ONE/USDT", "FTM/USDT",
-                "SAND/USDT", "GALA/USDT", "NEAR/USDT", "ATOM/USDT", "XLM/USDT",
-                "OP/USDT", "ARB/USDT", "APE/USDT", "JASMY/USDT", "KUB/USDT",
-                "SUI/USDT", "SEI/USDT", "WLD/USDT", "ORDI/USDT", "INJ/USDT",
-                "TIA/USDT", "BLUR/USDT", "PENDLE/USDT", "DYDX/USDT", "RUNE/USDT"
-            ]
+            # DYNAMIC MARKET SCANNING (User Request)
+            # Fetch all available symbols from exchange directly
+            if not self.exchange.markets:
+                self.exchange.load_markets()
             
-            # If limit is large (Farming Mode), we should dynamically fetch top volume from exchange if possible
-            # But for stability, we use the extended list + limit slicing
+            all_symbols = [s for s in self.exchange.symbols if '/USDT' in s]
             
-            target_list = candidates if limit > 20 else candidates[:20]
+            # Logic: If limit is small (Scanner Mode), use hardcoded 'Safe List' for speed
+            # If limit is large (Farming Mode), scan EVERYTHING.
+            if limit < 20: 
+                 # Fallback/Speed list
+                 target_list = [
+                    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
+                    "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "POL/USDT"
+                 ]
+            else:
+                 # FULL SCAN
+                 target_list = all_symbols
+                 if callback: callback(f"Radar: Reading entire market ({len(target_list)} pairs)...")
             
             valid_pairs = []
             import requests
