@@ -1,6 +1,9 @@
 import ccxt # Standard CCXT (Free Version)
 import pandas as pd
-import pandas_ta as ta # Financial Technical Analysis Library
+try:
+    import pandas_ta as ta # Financial Technical Analysis Library
+except ImportError:
+    import pandas_ta_classic as ta # Fallback to community fork
 import os
 from dotenv import load_dotenv
 
