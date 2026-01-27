@@ -147,6 +147,14 @@ def run_farming_cycle():
     # 1. Radar Scan (Wide Range)
     # Scan top candidates in Farming Mode
     update_status_db("📡 Radar: Scanning Market (Wide Range)...")
+    
+    # Start Farming Session Log
+    farm_id = None
+    try:
+        f_res = db.table("farming_history").insert({"status": "IN_PROGRESS"}).execute()
+        farm_id = f_res.data[0]['id']
+    except: pass
+    
     candidates_raw = radar.scan_market(callback=update_status_db) 
     
     last_heartbeat = time.time()
@@ -157,6 +165,10 @@ def run_farming_cycle():
     
     if not candidates:
         log_activity("System", "Farming yielded no crops (candidates). Retrying next cycle.", "WARNING")
+        # Update Log as Failed
+        if farm_id:
+             try: db.table("farming_history").update({"status": "FAILED", "logs": "No candidates found"}).eq("id", farm_id).execute()
+             except: pass
         return
         
     # 3. Save "Harvest" to DB for Sniper
@@ -166,6 +178,17 @@ def run_farming_cycle():
         import json
         db.table("bot_config").upsert({"key": "ACTIVE_CANDIDATES", "value": json.dumps(symbols)}).execute()
         db.table("bot_config").upsert({"key": "LAST_FARM_TIME", "value": str(time.time())}).execute()
+        
+        # Complete Farming Log
+        if farm_id:
+             try: 
+                 db.table("farming_history").update({
+                     "status": "COMPLETED", 
+                     "end_time": "now()",
+                     "candidates_found": len(symbols),
+                     "logs": f"Farmed {len(symbols)} coins."
+                 }).eq("id", farm_id).execute()
+             except: pass
         
         log_activity("System", f"🌾 Harvest Complete. {len(symbols)} coins ready for Sniper.", "SUCCESS")
         update_status_db(f"✅ Farmed {len(symbols)} coins. Switch to Sniper.")
