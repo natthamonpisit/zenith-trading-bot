@@ -130,64 +130,99 @@ def process_pair(pair, timeframe):
     except Exception as e:
         print(f"Error processing {pair}: {e}")
 
-def run_bot_cycle():
-    """
-    Main Orchestrator:
-    1. Radar/Attributes: Find Candidates
-    2. Head Hunter: Screen Candidates (Fundamentally)
-    3. Spy: Gather Data
-    4. Strategist+Judge: Analyze & Verify
-    5. Sniper: Execute
-    """
-    # CRITICAL: Pulse Heartbeat at start of cycle
-    global last_heartbeat
-    last_heartbeat = time.time()
-    
-    print("\n🔄 --- NEW CYCLE START ---")
-    log_activity("System", "Cycle Started", "INFO")
-    
-    # 0. Load Config (Timeframe)
+def update_status_db(msg):
     try:
-        tf_cfg = db.table("bot_config").select("value").eq("key", "TIMEFRAME").execute()
-        timeframe = str(tf_cfg.data[0]['value']).replace('"', '').strip() if tf_cfg.data else "1h"
-    except: timeframe = "1h"
-    print(f"⏳ Using Timeframe: {timeframe}")
+        db.table("bot_config").upsert({"key": "BOT_STATUS_DETAIL", "value": msg}).execute()
+        print(f"Status: {msg}")
+    except: pass
 
-    # 1. Radar: Find Candidates (Based on Volume/Gainers)
-    log_activity("Radar", "📡 Scanning 24h Top Gainers & Volume...")
+def run_farming_cycle():
+    """PHASE 1: FARMING (Data Gathering) - Runs occasionally"""
+    global last_heartbeat
+    log_activity("System", "🚜 Starting Farming Cycle (Data Gathering)...")
+    update_status_db("🚜 Farming Mode: Initializing...")
     
-    # Progress Callback Function
-    def update_status(msg):
-        try:
-             # Fast DB update for UI status
-             db.table("bot_config").upsert({"key": "BOT_STATUS_DETAIL", "value": msg}).execute()
-             print(f"Status Update: {msg}")
-        except: pass
-
-    update_status("Radar: Initializing Scan...")
-    candidates_raw = radar.scan_market(callback=update_status) # Returns list of dicts with 'symbol', 'volume'
-    update_status("Radar: Scan Complete. Processing...")
+    last_heartbeat = time.time()
     
-    # Pulse again after scanning (heavy operation)
+    # 1. Radar Scan (Wide Range)
+    # Scan top candidates in Farming Mode
+    update_status_db("📡 Radar: Scanning Market (Wide Range)...")
+    candidates_raw = radar.scan_market(callback=update_status_db) 
+    
     last_heartbeat = time.time()
 
-    # 2. Head Hunter: Filter Candidates (Fundamental/Liquidity Check)
-    log_activity("HeadHunter", "📋 Screening market fundamentals (ROE/PEG)...")
-    update_status("HeadHunter: Checking Fundamentals...")
+    # 2. Head Hunter Screen
+    update_status_db("📋 HeadHunter: Analyzing Fundamentals...")
     candidates = head_hunter.screen_market(candidates_raw)
     
     if not candidates:
-        print("😴 No qualified candidates found.")
+        log_activity("System", "Farming yielded no crops (candidates). Retrying next cycle.", "WARNING")
         return
-
-    # 3. Process Each Candidate
-    for coin in candidates:
-        # Pulse Heartbeat BEFORE every coin process to prevent timeout during long lists
-        last_heartbeat = time.time()
         
-        process_pair(coin['symbol'], timeframe)
-        # Sleep is fine now because we updated heartbeat
-        time.sleep(2) 
+    # 3. Save "Harvest" to DB for Sniper
+    # Store list of symbols to trade
+    try:
+        symbols = [c['symbol'] for c in candidates]
+        import json
+        db.table("bot_config").upsert({"key": "ACTIVE_CANDIDATES", "value": json.dumps(symbols)}).execute()
+        db.table("bot_config").upsert({"key": "LAST_FARM_TIME", "value": str(time.time())}).execute()
+        
+        log_activity("System", f"🌾 Harvest Complete. {len(symbols)} coins ready for Sniper.", "SUCCESS")
+        update_status_db(f"✅ Farmed {len(symbols)} coins. Switch to Sniper.")
+    except Exception as e:
+        log_activity("System", f"Harvest Save Error: {e}", "ERROR")
+
+def run_trading_cycle():
+    """PHASE 2: SNIPER (Execution) - Runs frequently"""
+    global last_heartbeat
+    last_heartbeat = time.time()
+    
+    # 1. Check if we need to Farm first
+    try:
+        last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
+        active_list = db.table("bot_config").select("value").eq("key", "ACTIVE_CANDIDATES").execute()
+        
+        should_farm = False
+        if not last_farm.data or not active_list.data:
+            should_farm = True
+        else:
+            # Farm every 12 hours (43200 sec)
+            elapsed = time.time() - float(last_farm.data[0]['value'])
+            if elapsed > 43200: 
+                should_farm = True
+                
+        if should_farm:
+            run_farming_cycle()
+            return # Skip trading this cycle, wait for next heartbeat to trade
+            
+        # 2. Load Candidates
+        import json
+        candidates_str = active_list.data[0]['value'].replace("'", '"')
+        candidates = json.loads(candidates_str)
+        
+        if not candidates:
+             run_farming_cycle()
+             return
+
+        # 3. Snipe (Process)
+        # Load timeframe
+        try:
+            tf = db.table("bot_config").select("value").eq("key", "TIMEFRAME").execute()
+            timeframe = str(tf.data[0]['value']).replace('"', '')
+        except: timeframe = "1h"
+
+        next_farm_in = int((43200 - (time.time() - float(last_farm.data[0]['value']))) / 3600)
+        update_status_db(f"🔫 Sniper Mode: Hunting {len(candidates)} pairs (Next Farm: {next_farm_in}h)")
+        
+        for i, symbol in enumerate(candidates):
+            last_heartbeat = time.time()
+            process_pair(symbol, timeframe)
+            time.sleep(1)
+            
+    except Exception as e:
+        print(f"Trading Cycle Error: {e}")
+        # If DB read fails, retry later
+        time.sleep(5)
 
 def start_watchdog():
     """Monitors system heartbeat and kills process if stuck"""
@@ -228,12 +263,13 @@ def start():
         except: pass
         
         # Run once immediately
-        run_bot_cycle()
+        run_trading_cycle()
         
-        # Schedule
-        schedule.every(5).minutes.do(run_bot_cycle) 
+        # Schedule - Check 'Sniper' loop every 2 minutes
+        # Logic inside Sniper will determine if Farming is needed
+        schedule.every(2).minutes.do(run_trading_cycle) 
         
-        print("Bot scheduled for 5-minute cycles.")
+        print("Bot scheduled for 2-minute Sniper cycles.")
         
         while True:
             try:
