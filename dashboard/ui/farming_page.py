@@ -65,17 +65,39 @@ def render_farming_page(db):
 
     st.markdown("---")
     
+    # --- TIMEZONE HELPER ---
+    def to_thai_time(iso_str):
+        try:
+            if not iso_str: return "-"
+            from datetime import datetime, timedelta
+            import pytz
+            
+            # Parse ISO (Supabase returns ISO string)
+            # Handle potential fractional seconds
+            if "." in iso_str:
+                dt = datetime.strptime(iso_str.split("+")[0], "%Y-%m-%dT%H:%M:%S.%f")
+            else:
+                dt = datetime.strptime(iso_str.split("+")[0], "%Y-%m-%dT%H:%M:%S")
+                
+            # Add 7 hours (Manual UTC+7 for simplicity or use pytz)
+            thai_dt = dt + timedelta(hours=7)
+            return thai_dt.strftime("%H:%M:%S")
+        except: return iso_str
+
     # --- LIVE DEBUG CONSOLE ---
     st.subheader("📟 Live System Activity")
     try:
         # Fetch 20 recent logs
-        logs = db.table("system_logs").select("*").order("timestamp", desc=True).limit(20).execute()
+        logs = db.table("system_logs").select("*").order("timestamp", desc=True).limit(50).execute()
         if logs.data:
-            for log in logs.data:
-                icon = "🟢" if log['level'] == 'INFO' else "🔴" if log['level'] == 'ERROR' else "🟡"
-                st.markdown(f"<div style='font-family: monospace; font-size: 12px; padding: 4px; border-bottom: 1px solid #333;'>{icon} [{log['timestamp'][11:19]}] <b>{log['role']}</b>: {log['message']}</div>", unsafe_allow_html=True)
-    except:
-        st.markdown("Waiting for logs...")
+            # Container with fixed height for scrolling
+            with st.container(height=300):
+                for log in logs.data:
+                    icon = "🟢" if log['level'] == 'INFO' else "🔴" if log['level'] == 'ERROR' else "🟡"
+                    time_str = to_thai_time(log['timestamp'])
+                    st.markdown(f"<div style='font-family: monospace; font-size: 13px; padding: 4px; border-bottom: 1px solid #333;'>{icon} [{time_str}] <b>{log['role']}</b>: {log['message']}</div>", unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error fetching logs: {e}")
 
     # Auto-Reload to check for completion
     time.sleep(3)
