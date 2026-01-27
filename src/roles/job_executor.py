@@ -117,27 +117,36 @@ class SniperExecutor:
                         'quoteOrderQty': self.exchange.cost_to_precision(symbol, amount),
                         'type': 'spot'
                     })
-                else:
-                    # For SELL: 'amount' is in base currency (like 0.001 BTC)
-                    print(f"Sniper: Placing Market SELL for {amount} qty...")
-                    order = self.exchange.create_order(symbol, 'market', 'sell', amount, None, {
+                elif side.upper() == 'SELL':
+                    # For SELL: Look up the open position to get base quantity
+                    pos_res = self.db.table("positions").select("*")\
+                        .eq("asset_id", signal['asset_id'])\
+                        .eq("is_open", True)\
+                        .eq("is_sim", False)\
+                        .order("created_at", desc=True).limit(1).execute()
+
+                    if not pos_res.data:
+                        raise Exception(f"No open LIVE position found for {symbol} to sell.")
+
+                    sell_qty = float(pos_res.data[0]['quantity'])
+                    print(f"Sniper: Placing Market SELL for {sell_qty} qty of {symbol}...")
+                    order = self.exchange.create_order(symbol, 'market', 'sell', sell_qty, None, {
                         'type': 'spot'
                     })
-                
+                else:
+                    raise Exception(f"Invalid Signal Type: {side}")
+
                 fill_price = order.get('price') or order.get('average', 0)
                 fill_amount = order.get('amount', amount)
                 print(f"Sniper: Order Placed! ID: {order['id']}")
             
-            # Guard: If we reached here without BUY/SELL logic triggering above (e.g. unknown side), raise error
-            if side.upper() not in ['BUY', 'SELL']:
-                raise Exception(f"Invalid Signal Type: {side}")
-
             # 2. Record Position / History in DB
             if side.upper() == 'BUY':
                 # BUY: Create a new open position
+                # Map BUY→LONG to match DB CHECK constraint (side IN ('LONG','SHORT'))
                 self.db.table("positions").insert({
                    "asset_id": signal['asset_id'],
-                   "side": side,
+                   "side": "LONG",
                    "entry_avg": fill_price,
                    "quantity": fill_amount,
                    "is_open": True,

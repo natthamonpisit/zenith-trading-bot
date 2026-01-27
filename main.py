@@ -1,4 +1,5 @@
 import time
+import json
 import schedule
 import threading
 import os
@@ -37,6 +38,17 @@ sniper = SniperExecutor()
 
 TIMEFRAME = "1h"
 
+def is_bot_stopped():
+    """Check if the bot has been stopped via dashboard Emergency Stop."""
+    try:
+        status = db.table("bot_config").select("value").eq("key", "BOT_STATUS").execute()
+        if status.data:
+            val = str(status.data[0]['value']).replace('"', '').strip()
+            return val == "STOPPED"
+    except Exception as e:
+        print(f"BOT_STATUS check error: {e}")
+    return False
+
 def log_activity(role, message, level="INFO"):
     print(f"[{role}] {message}") 
     try:
@@ -50,6 +62,9 @@ def log_activity(role, message, level="INFO"):
 
 def process_pair(pair, timeframe):
     """Encapsulated logic for a single trading pair"""
+    if is_bot_stopped():
+        print(f"⛔ Bot STOPPED. Skipping {pair}.")
+        return
     try:
         # 1. SPY A (Price)
         print(f"--- 1. SPY A: Fetching Price for {pair} ({timeframe}) ---")
@@ -200,7 +215,6 @@ def run_farming_cycle():
     # Store list of symbols to trade
     try:
         symbols = [c['symbol'] for c in candidates]
-        import json
         db.table("bot_config").upsert({"key": "ACTIVE_CANDIDATES", "value": json.dumps(symbols)}).execute()
         db.table("bot_config").upsert({"key": "LAST_FARM_TIME", "value": str(time.time())}).execute()
         
@@ -223,7 +237,11 @@ def run_farming_cycle():
 def run_trading_cycle():
     """PHASE 2: SNIPER (Execution) - Runs frequently"""
     set_heartbeat()
-    
+
+    if is_bot_stopped():
+        log_activity("System", "⛔ Bot is STOPPED. Skipping trading cycle.", "WARNING")
+        return
+
     # 1. Check if we need to Farm first
     try:
         last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
@@ -252,7 +270,6 @@ def run_trading_cycle():
             return # Skip trading this cycle, wait for next heartbeat to trade
             
         # 2. Load Candidates
-        import json
         candidates_str = active_list.data[0]['value'].replace("'", '"')
         candidates = json.loads(candidates_str)
         
