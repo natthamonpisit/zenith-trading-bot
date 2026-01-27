@@ -175,9 +175,9 @@ class PriceSpy:
             # Sort and Return Top N
             if valid_pairs:
                 sorted_pairs = sorted(valid_pairs, key=lambda x: x['volume'], reverse=True)
-                top_symbols = [p['symbol'] for p in sorted_pairs[:limit]]
-                print(f"Spy: Found Top {len(top_symbols)} Assets: {top_symbols}")
-                return top_symbols
+                top_candidates = sorted_pairs[:limit]
+                print(f"Spy: Found Top {len(top_candidates)} Assets: {[p['symbol'] for p in top_candidates]}")
+                return top_candidates # Returns List of Dicts [{'symbol': 'BTC/USDT', 'volume': 123}, ...]
             else:
                  # Ultimate Fallback
                  return ["BTC/USDT", "ETH/USDT", "SOL/USDT"]

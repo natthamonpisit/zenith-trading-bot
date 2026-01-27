@@ -45,7 +45,7 @@ class HeadHunter:
 
         for coin in candidates:
             symbol = coin['symbol']
-            vol = coin.get('quoteVolume', 0)
+            vol = coin.get('volume', 0) # Key from Spy is 'volume'
             status = f_data.get(symbol, 'NEUTRAL')
             
             # A. Blacklist Check
