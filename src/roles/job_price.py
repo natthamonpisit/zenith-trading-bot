@@ -153,7 +153,7 @@ class PriceSpy:
             # ideally this should be dynamic from API, but for now we list popular ones
             candidates = [
                 "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
-                "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
+                "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "POL/USDT",
                 "LTC/USDT", "TRX/USDT", "AVAX/USDT", "ONE/USDT", "FTM/USDT",
                 "SAND/USDT", "GALA/USDT", "NEAR/USDT", "ATOM/USDT", "XLM/USDT",
                 "OP/USDT", "ARB/USDT", "APE/USDT", "JASMY/USDT", "KUB/USDT",
@@ -204,6 +204,8 @@ class PriceSpy:
                         if vol > 0: valid_pairs.append({'symbol': symbol, 'volume': vol})
                     except Exception as loop_e:
                         print(f"Skipping {symbol}: {loop_e}")
+                        # Log the first 3 errors to UI to diagnose Loop capability
+                        if logger and i < 3: logger("Spy", f"Skip {symbol}: {loop_e}", "ERROR")
 
             # Sort by Volume Descending
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
