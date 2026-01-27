@@ -45,6 +45,15 @@ def render_farming_page(db):
         # Progress Bar Animation (Fake but reassuring) or Real if possible
         st.progress(50) # Indeterminate for now
         
+        # Emergency Config Access Button
+        st.markdown("<br>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("⚙️ Go to Config (Emergency Access)", use_container_width=True, type="secondary"):
+                st.session_state.farming_complete = True
+                st.session_state.page = 'Strategy Config'
+                st.rerun()
+        
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
