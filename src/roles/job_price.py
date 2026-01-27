@@ -8,6 +8,9 @@ except ImportError:
 import os
 from dotenv import load_dotenv
 
+# Error handling utilities
+from src.utils import CircuitBreaker, SimpleCache, ExternalAPIError, retry_with_backoff
+
 load_dotenv()
 
 class PriceSpy:
@@ -19,6 +22,16 @@ class PriceSpy:
         self.api_key = os.environ.get("BINANCE_API_KEY")
         self.secret = os.environ.get("BINANCE_SECRET")
         self.api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
+        
+        # Circuit breaker for CCXT API protection
+        self.ccxt_breaker = CircuitBreaker(
+            name="CCXT_API",
+            failure_threshold=5,
+            timeout=60.0
+        )
+        
+        # Cache for ticker data (short TTL to reduce API calls)
+        self.ticker_cache = SimpleCache(default_ttl=5.0, max_size=500)
         
         # Initialize basic CCXT instance without loading markets yet
         options = {
@@ -67,6 +80,61 @@ class PriceSpy:
                 'secret': self.secret,
                 'options': options
             })
+
+    def _fetch_ticker_protected(self, symbol: str):
+        """
+        Fetch single ticker with circuit breaker and cache protection.
+        
+        Args:
+            symbol: Trading pair symbol (e.g. 'BTC/USDT')
+            
+        Returns:
+            Ticker dict or None if failed
+        """
+        # Try cache first
+        cache_key = f"ticker:{symbol}"
+        cached = self.ticker_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        
+        # Fetch with circuit breaker
+        try:
+            ticker = self.ccxt_breaker.call_function(
+                lambda: self.exchange.fetch_ticker(symbol)
+            )
+            # Cache for 5 seconds
+            self.ticker_cache.set(cache_key, ticker, ttl=5)
+            return ticker
+        except Exception as e:
+            # Log error with context
+            print(f"⚠️ [CCXT Error] fetch_ticker({symbol}) failed: {e}")
+            # Return cached value if available (stale better than nothing)
+            return cached
+
+    def _fetch_tickers_protected(self):
+        """
+        Fetch all tickers with circuit breaker protection.
+        
+        Returns:
+            Dict of tickers or empty dict if failed
+        """
+        cache_key = "tickers:all"
+        cached = self.ticker_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        
+        try:
+            tickers = self.ccxt_breaker.call_function(
+                lambda: self.exchange.fetch_tickers()
+            )
+            # Cache for 5 seconds
+            self.ticker_cache.set(cache_key, tickers, ttl=5)
+            return tickers
+        except Exception as e:
+            print(f"⚠️ [CCXT Error] fetch_tickers() failed: {e}")
+            # Return cached or empty dict
+            return cached or {}
+
 
     def load_markets_custom(self):
         """Lazy load markets specifically for Binance TH if needed"""
@@ -133,7 +201,7 @@ class PriceSpy:
         try:
             # Try fetching from exchange if available, else approximate
             # Binance TH usually has USDT/THB
-            ticker = self.exchange.fetch_ticker('USDT/THB')
+            ticker = self._fetch_ticker_protected('USDT/THB')
             return float(ticker['last'])
         except Exception as e:
             print(f"Spy: USDT/THB rate fetch error: {e}")
@@ -216,7 +284,7 @@ class PriceSpy:
                 # Binance Global or other exchanges: Try batch fetch via CCXT
                 try:
                     print(f"Spy: Fetching all market tickers via CCXT...")
-                    all_tickers = self.exchange.fetch_tickers()
+                    all_tickers = self._fetch_tickers_protected()
                     
                     # Filter only symbols in our target_list
                     for symbol in target_list:
@@ -243,7 +311,7 @@ class PriceSpy:
                     
                     for symbol in target_list:
                         try:
-                            ticker = self.exchange.fetch_ticker(symbol)
+                            ticker = self._fetch_ticker_protected(symbol)
                             vol = 0
                             if 'quoteVolume' in ticker and ticker['quoteVolume']:
                                 vol = float(ticker['quoteVolume'])

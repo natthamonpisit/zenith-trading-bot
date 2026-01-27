@@ -5,6 +5,9 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from pydantic import BaseModel, Field
 from src.database import get_db
 
+# Error handling utilities
+from src.utils import CircuitBreaker, ExternalAPIError
+
 # --- THE STRATEGIST (AI) ---
 class Strategist:
     """
@@ -17,6 +20,13 @@ class Strategist:
         # Using Gemini 2.0 Flash for speed and reasoning balance
         self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
         self.db = get_db()
+        
+        # Circuit breaker for Gemini AI protection
+        self.gemini_breaker = CircuitBreaker(
+            name="GEMINI_AI",
+            failure_threshold=3,  # Stricter for AI
+            timeout=90.0  # Longer recovery for AI
+        )
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     def analyze_market(self, snapshot_id, asset_symbol, tech_data):
@@ -47,17 +57,27 @@ class Strategist:
         }}
         """
         
+        
         try:
-            # Set explicit timeout (30s) to prevent infinite hanging
-            response = self.model.generate_content(prompt, request_options={"timeout": 30})
+            # Call Gemini API with circuit breaker protection
+            response = self.gemini_breaker.call_function(
+                lambda: self.model.generate_content(prompt, request_options={"timeout": 30})
+            )
+            
             # Cleanup potential markdown formatting
             text = response.text.replace('```json', '').replace('```', '').strip()
             analysis = json.loads(text)
             return analysis
             
         except Exception as e:
-            print(f"Strategist Error: {e}")
-            return None
+            print(f"⚠️ [Gemini AI Error] analyze_market failed: {e}")
+            # Fallback: Return WAIT recommendation (safe default)
+            return {
+                'sentiment_score': 0.0,
+                'confidence': 0,
+                'reasoning': f'AI analysis unavailable: {str(e)}',
+                'recommendation': 'WAIT'
+            }
 
     def generate_performance_report(self, trade_history, days_range):
         """
