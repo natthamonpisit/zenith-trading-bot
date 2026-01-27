@@ -48,7 +48,8 @@ class Strategist:
         """
         
         try:
-            response = self.model.generate_content(prompt)
+            # Set explicit timeout (30s) to prevent infinite hanging
+            response = self.model.generate_content(prompt, request_options={"timeout": 30})
             # Cleanup potential markdown formatting
             text = response.text.replace('```json', '').replace('```', '').strip()
             analysis = json.loads(text)
@@ -78,7 +79,7 @@ class Strategist:
         Output: Markdown formatted text.
         """
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(prompt, request_options={"timeout": 60})
             return response.text
         except Exception as e:
             return f"Failed to generate report: {e}"
