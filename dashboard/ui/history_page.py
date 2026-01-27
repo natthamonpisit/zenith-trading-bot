@@ -27,7 +27,7 @@ def render_table(db, is_sim):
                  color = '#00FF94' if val == 'EXECUTED' else '#FF0055' if val == 'REJECTED' else '#FFAA00'
                  return f'color: {color}'
              
-             st.dataframe(df_hist.style.applymap(color_status, subset=['status']), use_container_width=True)
+             st.dataframe(df_hist.style.map(color_status, subset=['status']), use_container_width=True)
          else: 
              st.info(f"No {'simulation' if is_sim else 'live'} trading history found yet.")
     except Exception as e: 

@@ -23,13 +23,6 @@ COPY . .
 # Expose port for Streamlit
 EXPOSE 8501
 
-# Run both the bot and the dashboard using a simple shell script
-# Use $PORT environment variable provided by Railway
-# Execute directly to ensure runtime variable expansion
-# CRITICAL: Run ONLY Streamlit first with aggressive cloud settings
-# Direct simple command - no scripts
-# Force cache bust for this build
-ENV CACHE_BUST=20260126_4
 ENV PYTHONUNBUFFERED=1
 
 # Copy run script

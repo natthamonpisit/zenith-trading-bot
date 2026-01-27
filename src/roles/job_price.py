@@ -318,7 +318,7 @@ class PriceSpy:
 
 if __name__ == "__main__":
     # Test The Spy
-    spy = Spy()
+    spy = PriceSpy()
     print("Fetching BTC/USDT from Binance TH...")
     data = spy.fetch_ohlcv("BTC/USDT", limit=20)
     if data is not None:
