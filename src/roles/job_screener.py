@@ -7,7 +7,7 @@ class HeadHunter:
     def __init__(self, db_client=None):
         self.db = db_client
         # Default Config
-        self.min_volume = 1000000 # 1M USDT default (Lowered from 10M for easier testing)
+        self.min_volume = 50000 # 50k USDT default (User Request)
         self.universe = "ALL" # ALL, SAFE_LIST, TOP_30
 
     def load_config(self):
