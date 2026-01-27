@@ -177,39 +177,43 @@ class PriceSpy:
             print(f"Spy: Scanning {len(target_list)} candidates...")
             if callback: callback(f"Radar: Bulk scanning {len(target_list)} pairs...")
 
-            try:
-                # Optimized: Fetch all tickers in one go
-                tickers = self.exchange.fetch_tickers(target_list)
-                
-                for symbol, ticker in tickers.items():
-                    try:
-                        vol = 0
-                        if 'quoteVolume' in ticker and ticker['quoteVolume']:
-                            vol = float(ticker['quoteVolume'])
-                        elif 'baseVolume' in ticker and 'last' in ticker:
-                            vol = float(ticker['baseVolume']) * float(ticker['last'])
-                        
-                        if vol > 0:
-                            valid_pairs.append({'symbol': symbol, 'volume': vol})
-                    except: pass
+            # Batch Fetch for Speed & Reliability (CHUNKED)
+            import math
+            CHUNK_SIZE = 40 # Conservative chunk size to avoid URL Too Long error
+            
+            print(f"Spy: Scanning {len(target_list)} pairs (in chunks of {CHUNK_SIZE})...")
+            if callback: callback(f"Radar: Bulk scanning {len(target_list)} pairs...")
+
+            chunks = [target_list[i:i + CHUNK_SIZE] for i in range(0, len(target_list), CHUNK_SIZE)]
+            
+            for chunk in chunks:
+                try:
+                    # Fetch chunk
+                    tickers = self.exchange.fetch_tickers(chunk)
                     
-            except Exception as e:
-                # Fallback to loop if batch fails (or method not supported)
-                msg = f"Radar Error (Batch): {e}. Switching to Loop."
-                print(msg)
-                if callback: callback(msg)
-                if logger: logger("Spy", msg, "WARNING") # Log to system_logs
-                
-                for i, symbol in enumerate(target_list):
-                    if callback and i % 5 == 0: callback(f"Radar: Scanning {symbol} ({i+1}/{len(target_list)})")
-                    try:
-                        ticker = self.exchange.fetch_ticker(symbol)
-                        vol = float(ticker.get('quoteVolume', 0))
-                        if vol > 0: valid_pairs.append({'symbol': symbol, 'volume': vol})
-                    except Exception as loop_e:
-                        print(f"Skipping {symbol}: {loop_e}")
-                        # Log the first 3 errors to UI to diagnose Loop capability
-                        if logger and i < 3: logger("Spy", f"Skip {symbol}: {loop_e}", "ERROR")
+                    for symbol, ticker in tickers.items():
+                        try:
+                            vol = 0
+                            if 'quoteVolume' in ticker and ticker['quoteVolume']:
+                                vol = float(ticker['quoteVolume'])
+                            elif 'baseVolume' in ticker and 'last' in ticker:
+                                vol = float(ticker['baseVolume']) * float(ticker['last'])
+                            
+                            if vol > 0:
+                                valid_pairs.append({'symbol': symbol, 'volume': vol})
+                        except: pass
+                        
+                except Exception as e:
+                    # Fallback to loop ONLY for this failed chunk
+                    if logger: logger("Spy", f"Batch Chunk Failed: {e}. Switching to Loop for {len(chunk)} items.", "WARNING")
+                    
+                    for symbol in chunk:
+                        try:
+                            ticker = self.exchange.fetch_ticker(symbol)
+                            vol = float(ticker.get('quoteVolume', 0))
+                            if vol > 0: valid_pairs.append({'symbol': symbol, 'volume': vol})
+                        except Exception as loop_e:
+                            pass # Silent skip in fallback loop to avoid log spam
 
             # Sort by Volume Descending
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
