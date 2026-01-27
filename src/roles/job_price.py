@@ -186,7 +186,8 @@ class PriceSpy:
                 print(f"Spy: Binance TH detected - using individual ticker requests...")
                 if logger: logger("Spy", f"Binance TH: Fetching {len(target_list)} tickers individually (no batch endpoint).", "INFO")
                 
-                for symbol in target_list:
+                total = len(target_list)
+                for idx, symbol in enumerate(target_list, 1):
                     try:
                         ticker = self.exchange.fetch_ticker(symbol)
                         vol = 0
@@ -197,6 +198,14 @@ class PriceSpy:
                         
                         if vol > 0: 
                             valid_pairs.append({'symbol': symbol, 'volume': vol})
+                        
+                        # Show progress every 20 symbols or at completion
+                        if idx % 20 == 0 or idx == total:
+                            progress_pct = (idx * 100) // total
+                            progress_msg = f"Radar: Fetching tickers {idx}/{total} ({progress_pct}%)..."
+                            print(f"Spy: Progress: {idx}/{total} ({progress_pct}%)")
+                            if callback: callback(progress_msg)
+                            
                     except Exception as loop_e:
                         pass # Silent skip to avoid log spam
                 
