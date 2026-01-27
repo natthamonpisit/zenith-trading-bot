@@ -134,7 +134,8 @@ class PriceSpy:
             # Binance TH usually has USDT/THB
             ticker = self.exchange.fetch_ticker('USDT/THB')
             return float(ticker['last'])
-        except:
+        except Exception as e:
+            print(f"Spy: USDT/THB rate fetch error: {e}")
             return 35.0  # Fallback constant
 
     def get_account_balance(self):
@@ -204,7 +205,8 @@ class PriceSpy:
                             
                             if vol > 0:
                                 valid_pairs.append({'symbol': symbol, 'volume': vol})
-                        except: pass
+                        except Exception as e:
+                            print(f"Spy: Ticker parse error for {symbol}: {e}")
                         
                 except Exception as e:
                     # Fallback to loop ONLY for this failed chunk
@@ -266,8 +268,7 @@ class PriceSpy:
                 df['sma_20'] = bb['BBM_20_2.0'] # Middleware is Simple Moving Average
             
             # 5. Fill NaN (backfill first to avoid dropping initial rows)
-            df.bfill(inplace=True) 
-            df.ffill(inplace=True)
+            df = df.bfill().ffill()
             
             return df
             

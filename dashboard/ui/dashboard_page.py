@@ -81,7 +81,8 @@ def render_dashboard_page(db):
                     ticker = spy.exchange.fetch_ticker(coin)
                     color = "#00FF94" if ticker.get('percentage', 0) >= 0 else "#FF0055"
                     st.markdown(f"**{coin}** <span style='float:right; color:{color}'>${ticker['last']:,.2f}</span>", unsafe_allow_html=True)
-            except: pass
+            except Exception as e:
+                st.caption(f"Market data unavailable: {e}")
 
     with main_col:
         with st.container(border=True):

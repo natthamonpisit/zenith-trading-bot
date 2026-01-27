@@ -120,7 +120,8 @@ class Judge:
             response = self.db.table("bot_config").select("*").execute()
             # Sanitize all values by removing literal quotes
             return {item['key']: str(item['value']).replace('"', '').strip() for item in response.data}
-        except:
+        except Exception as e:
+            print(f"[Judge] Config load error: {e}")
             return {'RSI_THRESHOLD': 75, 'AI_CONF_THRESHOLD': 60}
 
     def evaluate(self, ai_data, tech_data, portfolio_balance):

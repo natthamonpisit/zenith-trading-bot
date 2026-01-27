@@ -68,15 +68,19 @@ from dashboard.ui.farming_page import render_farming_page
 import time
 
 # --- GATEKEEPER (Farming Check) ---
-# Check if data is fresh (within 12 hours)
+# Check if data is fresh (within configured farming interval)
 is_fresh = False
 try:
+    farm_interval_cfg = db.table("bot_config").select("value").eq("key", "FARMING_INTERVAL_HOURS").execute()
+    farm_interval_secs = float(farm_interval_cfg.data[0]['value']) * 3600 if farm_interval_cfg.data else 43200
+
     last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
     if last_farm.data:
         elapsed = time.time() - float(last_farm.data[0]['value'])
-        if elapsed < 43200: # 12 Hours
+        if elapsed < farm_interval_secs:
             is_fresh = True
-except: pass
+except Exception as e:
+    print(f"Farming freshness check error: {e}")
 
 if not is_fresh and not st.session_state.get('farming_complete'):
     render_farming_page(db)

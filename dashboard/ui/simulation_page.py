@@ -23,7 +23,8 @@ def render_simulation_page(db):
                     ticker = spy.exchange.fetch_ticker(p['assets']['symbol'])
                     curr_price = ticker['last']
                     unrealized_pnl += (curr_price - float(p['entry_avg'])) * float(p['quantity'])
-                except: pass
+                except Exception as e:
+                    print(f"Simulation PnL calc error for {p['assets']['symbol']}: {e}")
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Mock Balance", f"${balance:,.2f}")

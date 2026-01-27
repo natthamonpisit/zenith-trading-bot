@@ -39,7 +39,9 @@ class SniperExecutor:
                 mode = conf.data[0]['value'] if conf.data else "PAPER"
                 # CRITICAL: Strip literal quotes if present (Supabase JSON/String quirk)
                 mode = str(mode).replace('"', '').strip()
-            except: mode = "PAPER"
+            except Exception as e:
+                print(f"Sniper: Mode fetch error: {e}")
+                mode = "PAPER"
 
             is_sim = (mode == 'PAPER')
             print(f"Sniper: Executing {side} on {symbol} (Mode: {mode})...")

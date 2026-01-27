@@ -88,19 +88,25 @@ def process_pair(pair, timeframe):
         try:
             mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
             mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
-        except: mode = "PAPER"
+        except Exception as e:
+            print(f"Mode fetch error: {e}")
+            mode = "PAPER"
 
         if mode == "PAPER":
             try:
                 sim_wallet = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
                 balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
-            except: balance = 1000.0
+            except Exception as e:
+                print(f"Sim wallet fetch error: {e}")
+                balance = 1000.0
         else:
             try:
                 # LIVE Mode: Fetch real USDT balance
                 bal_data = price_spy.get_account_balance()
                 balance = bal_data['total'].get('USDT', 0.0) if bal_data else 0.0
-            except: balance = 0.0
+            except Exception as e:
+                print(f"Live balance fetch error: {e}")
+                balance = 0.0
         
         # Convert AI output to needed format
         ai_data = {'confidence': analysis.get('confidence'), 'recommendation': analysis.get('recommendation')}
@@ -147,7 +153,8 @@ def update_status_db(msg):
     try:
         db.table("bot_config").upsert({"key": "BOT_STATUS_DETAIL", "value": msg}).execute()
         print(f"Status: {msg}")
-    except: pass
+    except Exception as e:
+        print(f"Status DB update error: {e}")
 
 def run_farming_cycle():
     """PHASE 1: FARMING (Data Gathering) - Runs occasionally"""
@@ -165,7 +172,8 @@ def run_farming_cycle():
     try:
         f_res = db.table("farming_history").insert({"status": "IN_PROGRESS"}).execute()
         farm_id = f_res.data[0]['id']
-    except: pass
+    except Exception as e:
+        print(f"Farming history insert error: {e}")
     
     candidates_raw = radar.scan_market(callback=update_status_db, logger=log_activity)
 
@@ -183,7 +191,7 @@ def run_farming_cycle():
         # Update Log as Failed
         if farm_id:
              try: db.table("farming_history").update({"status": "FAILED", "logs": "No candidates found"}).eq("id", farm_id).execute()
-             except: pass
+             except Exception as e: print(f"Farming history update error: {e}")
         return
         
     # 3. Save "Harvest" to DB for Sniper
@@ -196,14 +204,14 @@ def run_farming_cycle():
         
         # Complete Farming Log
         if farm_id:
-             try: 
+             try:
                  db.table("farming_history").update({
-                     "status": "COMPLETED", 
+                     "status": "COMPLETED",
                      "end_time": "now()",
                      "candidates_found": len(symbols),
                      "logs": f"Farmed {len(symbols)} coins."
                  }).eq("id", farm_id).execute()
-             except: pass
+             except Exception as e: print(f"Farming history complete error: {e}")
         
         log_activity("System", f"🌾 Harvest Complete. {len(symbols)} coins ready for Sniper.", "SUCCESS")
         update_status_db(f"✅ Farmed {len(symbols)} coins. Switch to Sniper.")
@@ -227,7 +235,9 @@ def run_trading_cycle():
             try:
                 interval_cfg = db.table("bot_config").select("value").eq("key", "FARMING_INTERVAL_HOURS").execute()
                 interval_hours = float(interval_cfg.data[0]['value']) if interval_cfg.data else 12.0
-            except: interval_hours = 12.0
+            except Exception as e:
+                print(f"Farming interval config error: {e}")
+                interval_hours = 12.0
             
             interval_seconds = interval_hours * 3600
             
@@ -253,7 +263,9 @@ def run_trading_cycle():
         try:
             tf = db.table("bot_config").select("value").eq("key", "TIMEFRAME").execute()
             timeframe = str(tf.data[0]['value']).replace('"', '')
-        except: timeframe = "1h"
+        except Exception as e:
+            print(f"Timeframe config error: {e}")
+            timeframe = "1h"
 
         # Calculate Remaining Time dynamically
         remaining_seconds = interval_seconds - (time.time() - float(last_farm.data[0]['value']))
@@ -306,16 +318,22 @@ def start():
         try:
              db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": str(time.time())}).execute()
              print("💓 Heartbeat Initialized in DB")
-        except: pass
+        except Exception as e:
+            print(f"Heartbeat init error: {e}")
         
         # Run once immediately
         run_trading_cycle()
-        
-        # Schedule - Check 'Sniper' loop every 2 minutes
-        # Logic inside Sniper will determine if Farming is needed
-        schedule.every(2).minutes.do(run_trading_cycle) 
-        
-        print("Bot scheduled for 2-minute Sniper cycles.")
+
+        # Load trading cycle interval from DB (default 2 minutes)
+        try:
+            cycle_cfg = db.table("bot_config").select("value").eq("key", "TRADING_CYCLE_MINUTES").execute()
+            cycle_minutes = int(float(cycle_cfg.data[0]['value'])) if cycle_cfg.data else 2
+        except Exception:
+            cycle_minutes = 2
+
+        schedule.every(cycle_minutes).minutes.do(run_trading_cycle)
+
+        print(f"Bot scheduled for {cycle_minutes}-minute Sniper cycles.")
         
         while True:
             try:
@@ -329,7 +347,8 @@ def start():
         # Emergency Log
         try:
              db.table("system_logs").insert({"role": "System", "message": f"CRITICAL CRASH: {e}", "level": "ERROR"}).execute()
-        except: print(f"Fatal: {e}")
+        except Exception:
+            print(f"Fatal: {e}")
 
 if __name__ == "__main__":
     start()

@@ -34,7 +34,8 @@ def render_sidebar(db):
             if status_detail.data:
                 msg = status_detail.data[0]['value'].replace('"', '')
                 st.info(f"📋 {msg}")
-        except: pass
+        except Exception as e:
+            print(f"Sidebar status detail error: {e}")
         
         st.markdown("---")
         

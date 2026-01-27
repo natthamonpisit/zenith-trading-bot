@@ -60,8 +60,8 @@ def render_farming_page(db):
             st.dataframe(df, use_container_width=True)
         else:
             st.info("No farming history recorded yet.")
-    except:
-        st.warning("Farming History table not waiting or empty.")
+    except Exception as e:
+        st.warning(f"Farming History table error: {e}")
 
     st.markdown("---")
     
@@ -114,6 +114,7 @@ def render_farming_page(db):
                  time.sleep(1)
                  st.session_state.farming_complete = True
                  st.rerun()
-    except: pass
-    
+    except Exception as e:
+        print(f"Farming completion check error: {e}")
+
     st.rerun()
