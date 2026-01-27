@@ -155,13 +155,25 @@ def run_bot_cycle():
 
     # 1. Radar: Find Candidates (Based on Volume/Gainers)
     log_activity("Radar", "📡 Scanning 24h Top Gainers & Volume...")
-    candidates_raw = radar.scan_market() # Returns list of dicts with 'symbol', 'volume'
+    
+    # Progress Callback Function
+    def update_status(msg):
+        try:
+             # Fast DB update for UI status
+             db.table("bot_config").upsert({"key": "BOT_STATUS_DETAIL", "value": msg}).execute()
+             print(f"Status Update: {msg}")
+        except: pass
+
+    update_status("Radar: Initializing Scan...")
+    candidates_raw = radar.scan_market(callback=update_status) # Returns list of dicts with 'symbol', 'volume'
+    update_status("Radar: Scan Complete. Processing...")
     
     # Pulse again after scanning (heavy operation)
     last_heartbeat = time.time()
 
     # 2. Head Hunter: Filter Candidates (Fundamental/Liquidity Check)
     log_activity("HeadHunter", "📋 Screening market fundamentals (ROE/PEG)...")
+    update_status("HeadHunter: Checking Fundamentals...")
     candidates = head_hunter.screen_market(candidates_raw)
     
     if not candidates:
