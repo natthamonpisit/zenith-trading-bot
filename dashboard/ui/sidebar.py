@@ -22,8 +22,9 @@ def render_sidebar(db):
                     st.error(f"💀 Offline ({int(diff/60)}m ago)")
             else:
                 st.warning("⚠️ No Heartbeat Signal")
-        except:
-            st.caption("Connecting...")
+        except Exception as e:
+            st.error(f"⚠️ Connection Error: {e}")
+            st.caption("Retrying DB...")
         
         st.markdown("---")
         

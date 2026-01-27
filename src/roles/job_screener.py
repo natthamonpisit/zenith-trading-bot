@@ -34,10 +34,13 @@ class HeadHunter:
         f_data = {}
         try:
             if self.db:
+                print("   [HeadHunter] Fetching fundamental_coins table...")
                 rows = self.db.table("fundamental_coins").select("*").execute()
+                print(f"   [HeadHunter] Fetched {len(rows.data)} rows.")
                 f_data = {r['symbol']: r['status'] for r in rows.data}
-        except: pass
-
+        except Exception as e:
+             print(f"   [HeadHunter] DB Error: {e}") 
+        
         qualified = []
         
         print(f"🕵️ Head Hunter: Screening {len(candidates)} candidates...")
