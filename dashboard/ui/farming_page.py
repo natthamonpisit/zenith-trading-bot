@@ -63,6 +63,20 @@ def render_farming_page(db):
     except:
         st.warning("Farming History table not waiting or empty.")
 
+    st.markdown("---")
+    
+    # --- LIVE DEBUG CONSOLE ---
+    st.subheader("📟 Live System Activity")
+    try:
+        # Fetch 20 recent logs
+        logs = db.table("system_logs").select("*").order("timestamp", desc=True).limit(20).execute()
+        if logs.data:
+            for log in logs.data:
+                icon = "🟢" if log['level'] == 'INFO' else "🔴" if log['level'] == 'ERROR' else "🟡"
+                st.markdown(f"<div style='font-family: monospace; font-size: 12px; padding: 4px; border-bottom: 1px solid #333;'>{icon} [{log['timestamp'][11:19]}] <b>{log['role']}</b>: {log['message']}</div>", unsafe_allow_html=True)
+    except:
+        st.markdown("Waiting for logs...")
+
     # Auto-Reload to check for completion
     time.sleep(3)
     
