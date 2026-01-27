@@ -12,6 +12,19 @@ from src.roles.job_scout import Radar
 from src.roles.job_analysis import Strategist, Judge
 from src.roles.job_executor import SniperExecutor
 
+# Thread-safe heartbeat tracking
+_heartbeat_lock = threading.Lock()
+_last_heartbeat = time.time()
+
+def get_heartbeat():
+    with _heartbeat_lock:
+        return _last_heartbeat
+
+def set_heartbeat():
+    global _last_heartbeat
+    with _heartbeat_lock:
+        _last_heartbeat = time.time()
+
 # Initialize Team
 db = get_db()
 head_hunter = HeadHunter(db) # Pass DB for Config/Fundamental Data
@@ -138,11 +151,10 @@ def update_status_db(msg):
 
 def run_farming_cycle():
     """PHASE 1: FARMING (Data Gathering) - Runs occasionally"""
-    global last_heartbeat
     log_activity("System", "🚜 Starting Farming Cycle (Data Gathering)...")
     update_status_db("🚜 Farming Mode: Initializing...")
-    
-    last_heartbeat = time.time()
+
+    set_heartbeat()
     
     # 1. Radar Scan (Wide Range)
     # Scan top candidates in Farming Mode
@@ -155,9 +167,9 @@ def run_farming_cycle():
         farm_id = f_res.data[0]['id']
     except: pass
     
-    candidates_raw = radar.scan_market(callback=update_status_db, logger=log_activity) 
-    
-    last_heartbeat = time.time()
+    candidates_raw = radar.scan_market(callback=update_status_db, logger=log_activity)
+
+    set_heartbeat()
 
     # 2. Head Hunter Screen
     update_status_db("📋 HeadHunter: Analyzing Fundamentals...")
@@ -200,8 +212,7 @@ def run_farming_cycle():
 
 def run_trading_cycle():
     """PHASE 2: SNIPER (Execution) - Runs frequently"""
-    global last_heartbeat
-    last_heartbeat = time.time()
+    set_heartbeat()
     
     # 1. Check if we need to Farm first
     try:
@@ -251,7 +262,7 @@ def run_trading_cycle():
         update_status_db(f"🔫 Sniper Mode: Hunting {len(candidates)} pairs (Next Farm: {next_farm_in}h)")
         
         for i, symbol in enumerate(candidates):
-            last_heartbeat = time.time()
+            set_heartbeat()
             process_pair(symbol, timeframe)
             time.sleep(1)
             
@@ -262,13 +273,13 @@ def run_trading_cycle():
 
 def start_watchdog():
     """Monitors system heartbeat and kills process if stuck"""
-    global last_heartbeat
     print("🐕 Watchdog Started")
     while True:
         time.sleep(60)
         # If no heartbeat for 5 minutes (300s), kill the process
-        if time.time() - last_heartbeat > 300:
-            msg = f"Watchdog: System Frozen for {time.time() - last_heartbeat:.0f}s. RESTARTING CONTAINER..."
+        elapsed = time.time() - get_heartbeat()
+        if elapsed > 300:
+            msg = f"Watchdog: System Frozen for {elapsed:.0f}s. RESTARTING CONTAINER..."
             print(f"💀 {msg}")
             log_activity("System", msg, "ERROR")
             os._exit(1) # Force Kill
@@ -280,16 +291,15 @@ def start_watchdog():
             print(f"Heartbeat DB Error: {e}")
 
 def start():
-    global last_heartbeat
     try:
         log_activity("System", "🚀 Zenith Bot Started (6-Role Architecture)", "SUCCESS")
-        
+
         # Start Watchdog
         wd = threading.Thread(target=start_watchdog, daemon=True)
         wd.start()
 
         # Init heartbeat
-        last_heartbeat = time.time()
+        set_heartbeat()
         
         # --- IMMEDIATE FEEDBACK FOR USER ---
         # Write "I am Alive" signal to DB immediately so Dashboard turns GREEN

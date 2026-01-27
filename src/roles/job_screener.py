@@ -53,8 +53,7 @@ class HeadHunter:
                 vol = 0
             else:
                 symbol = coin.get('symbol', 'UNKNOWN')
-                vol = coin.get('volume', 0) # Key from Spy is 'volume'
-            vol = coin.get('volume', 0) # Key from Spy is 'volume'
+                vol = coin.get('volume', 0)
             status = f_data.get(symbol, 'NEUTRAL')
             
             # A. Blacklist Check

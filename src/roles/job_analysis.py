@@ -56,7 +56,7 @@ class Strategist:
             return analysis
             
         except Exception as e:
-            print(f"Stratgeist Error: {e}")
+            print(f"Strategist Error: {e}")
             return None
 
     def generate_performance_report(self, trade_history, days_range):

@@ -19,6 +19,9 @@ from dashboard.ui.fundamental_page import render_fundamental_page
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
 db = get_db()
 
+# Dashboard password from environment variable (default for dev only)
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "zenith2026")
+
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
@@ -32,6 +35,23 @@ st.markdown("""
 # --- SESSION STATE ---
 if 'page' not in st.session_state: st.session_state.page = 'Dashboard'
 if 'entered' not in st.session_state: st.session_state.entered = False
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+
+# --- AUTHENTICATION ---
+if not st.session_state.authenticated:
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<br>"*3, unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center;'> <h1 style='font-size: 80px;'>🐺</h1> <h1>ZENITH OS</h1> <p style='color: grey;'>AI Trading Modular Gateway</p> </div>", unsafe_allow_html=True)
+        password = st.text_input("Enter Password", type="password", placeholder="Dashboard password")
+        if st.button("🔐 LOGIN", type="primary", use_container_width=True):
+            if password == DASHBOARD_PASSWORD:
+                st.session_state.authenticated = True
+                st.session_state.entered = True
+                st.rerun()
+            else:
+                st.error("Invalid password.")
+    st.stop()
 
 # --- GATEKEEPER ---
 if not st.session_state.entered:
@@ -39,7 +59,7 @@ if not st.session_state.entered:
     with c2:
         st.markdown("<br>"*5, unsafe_allow_html=True)
         st.markdown("<div style='text-align: center;'> <h1 style='font-size: 80px;'>🐺</h1> <h1>ZENITH OS</h1> <p style='color: grey;'>AI Trading Modular Gateway</p> </div>", unsafe_allow_html=True)
-        if st.button("🔌 CONNECT TO SYSTEM", type="primary", use_container_width=True): 
+        if st.button("🔌 CONNECT TO SYSTEM", type="primary", use_container_width=True):
             st.session_state.entered = True
             st.rerun()
     st.stop()

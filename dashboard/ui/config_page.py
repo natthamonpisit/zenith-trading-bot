@@ -87,10 +87,10 @@ def render_config_page(db):
                     {"key": "POSITION_SIZE_PCT", "value": str(new_pos_size)},
                     {"key": "MAX_RISK_PER_TRADE", "value": str(new_risk)},
                     {"key": "MAX_OPEN_POSITIONS", "value": str(new_max_pos)},
-                    {"key": "TRADING_MODE", "value": f'"{new_mode}"'},
-                    {"key": "TIMEFRAME", "value": f'"{new_tf}"'},
-                    {"key": "ENABLE_EMA_TREND", "value": f'"{str(new_trend).lower()}"'},
-                    {"key": "ENABLE_MACD_MOMENTUM", "value": f'"{str(new_macd).lower()}"'}
+                    {"key": "TRADING_MODE", "value": new_mode},
+                    {"key": "TIMEFRAME", "value": new_tf},
+                    {"key": "ENABLE_EMA_TREND", "value": str(new_trend).lower()},
+                    {"key": "ENABLE_MACD_MOMENTUM", "value": str(new_macd).lower()}
                 ]
                 for cfg in configs:
                     db.table("bot_config").upsert(cfg).execute()

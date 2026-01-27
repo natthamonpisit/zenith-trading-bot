@@ -131,17 +131,29 @@ class SniperExecutor:
                 raise Exception(f"Invalid Signal Type: {side}")
 
             # 2. Record Position / History in DB
-            # For BUY, we ALWAYS create a new open position
-            # For SELL (Sim), we already closed the position above, but we might want to record the "Sell" action too.
-            # To keep history simple, let's insert the action normally.
-            self.db.table("positions").insert({
-               "asset_id": signal['asset_id'],
-               "side": side,
-               "entry_avg": fill_price,
-               "quantity": fill_amount,
-               "is_open": True if side.upper() == 'BUY' else False,
-               "is_sim": is_sim
-            }).execute()
+            if side.upper() == 'BUY':
+                # BUY: Create a new open position
+                self.db.table("positions").insert({
+                   "asset_id": signal['asset_id'],
+                   "side": side,
+                   "entry_avg": fill_price,
+                   "quantity": fill_amount,
+                   "is_open": True,
+                   "is_sim": is_sim
+                }).execute()
+            else:
+                # SELL: Position already closed above (sim) or record close for live
+                if not is_sim:
+                    # For LIVE mode, close the existing open position
+                    pos_res = self.db.table("positions").select("*")\
+                        .eq("asset_id", signal['asset_id'])\
+                        .eq("is_open", True)\
+                        .eq("is_sim", False)\
+                        .order("created_at", desc=True).limit(1).execute()
+                    if pos_res.data:
+                        self.db.table("positions").update({
+                            "is_open": False
+                        }).eq("id", pos_res.data[0]['id']).execute()
             
             # 3. Update Signal Status
             self.db.table("trade_signals").update({"status": "EXECUTED", "is_sim": is_sim}).eq("id", signal['id']).execute()
