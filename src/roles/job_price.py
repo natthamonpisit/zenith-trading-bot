@@ -164,36 +164,47 @@ class PriceSpy:
             valid_pairs = []
             import requests
 
-            print(f"Spy: Scanning {len(target_list)} candidates for Top Volume...")
-            
-            for i, symbol in enumerate(target_list):
-                # Live Status Update (every 3 items to be responsive)
-                if callback and i % 3 == 0:
-                     callback(f"Radar: Scanning {symbol} ({i+1}/{len(target_list)})")
+            # Batch Fetch for Speed & Reliability
+            print(f"Spy: Scanning {len(target_list)} candidates...")
+            if callback: callback(f"Radar: Bulk scanning {len(target_list)} pairs...")
 
-                try:
-                    # Use CCXT for unified standardized fetching (Handles headers/rate-limits)
-                    ticker = self.exchange.fetch_ticker(symbol)
+            try:
+                # Optimized: Fetch all tickers in one go
+                tickers = self.exchange.fetch_tickers(target_list)
+                
+                for symbol, ticker in tickers.items():
+                    try:
+                        vol = 0
+                        if 'quoteVolume' in ticker and ticker['quoteVolume']:
+                            vol = float(ticker['quoteVolume'])
+                        elif 'baseVolume' in ticker and 'last' in ticker:
+                            vol = float(ticker['baseVolume']) * float(ticker['last'])
+                        
+                        if vol > 0:
+                            valid_pairs.append({'symbol': symbol, 'volume': vol})
+                    except: pass
                     
-                    if 'quoteVolume' in ticker:
-                        vol = float(ticker['quoteVolume'])
-                        # Append dict
-                        valid_pairs.append({'symbol': symbol, 'volume': vol})
-                    else:
-                        # Fallback
-                        vol = float(ticker.get('baseVolume', 0)) * float(ticker.get('last', 0))
+            except Exception as e:
+                # Fallback to loop if batch fails (or method not supported)
+                msg = f"Radar Error (Batch): {e}. Switching to Loop."
+                print(msg)
+                if callback: callback(msg)
+                
+                for i, symbol in enumerate(target_list):
+                    if callback and i % 5 == 0: callback(f"Radar: Scanning {symbol} ({i+1}/{len(target_list)})")
+                    try:
+                        ticker = self.exchange.fetch_ticker(symbol)
+                        vol = float(ticker.get('quoteVolume', 0))
                         if vol > 0: valid_pairs.append({'symbol': symbol, 'volume': vol})
+                    except Exception as loop_e:
+                        print(f"Skipping {symbol}: {loop_e}")
 
-                except Exception as e:
-                    print(f"Spy Error ({symbol}): {e}")
-                    pass
+            # Sort by Volume Descending
+            valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
             
-            # Sort and Return Top N
-            if valid_pairs:
-                sorted_pairs = sorted(valid_pairs, key=lambda x: x['volume'], reverse=True)
-                top_candidates = sorted_pairs[:limit]
-                print(f"Spy: Found Top {len(top_candidates)} Assets: {[p['symbol'] for p in top_candidates]}")
-                return top_candidates # Returns List of Dicts [{'symbol': 'BTC/USDT', 'volume': 123}, ...]
+            if callback: callback(f"Radar: Found {len(valid_pairs)} valid candidates.")
+            print(f"Spy: Found {len(valid_pairs)} valid candidates.")
+            return valid_pairs
             else:
                  # Ultimate Fallback
                  return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
