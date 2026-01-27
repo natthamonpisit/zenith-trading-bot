@@ -24,6 +24,10 @@ from dashboard.ui.fundamental_page import render_fundamental_page
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
 db = get_db()
 
+# --- SESSION STATE ---
+if 'page' not in st.session_state: st.session_state.page = 'Dashboard'
+if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = True
+
 # --- AUTHENTICATION ---
 from dashboard.ui.auth import check_password, show_logout_button
 
