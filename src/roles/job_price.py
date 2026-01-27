@@ -138,7 +138,7 @@ class PriceSpy:
              print(f"Spy (Balance) Error: {e}")
              return None
 
-    def get_top_symbols(self, limit=10):
+    def get_top_symbols(self, limit=10, callback=None):
         """Fetches top USDT pairs by 24h Volume (Robust Loop for Binance TH)"""
         try:
             if not self.exchange.markets:
@@ -158,7 +158,11 @@ class PriceSpy:
 
             print(f"Spy: Scanning {len(candidates)} candidates for Top Volume...")
             
-            for symbol in candidates:
+            for i, symbol in enumerate(candidates):
+                # Live Status Update (every 3 items to be responsive)
+                if callback and i % 3 == 0:
+                     callback(f"Radar: Scanning {symbol} ({i+1}/{len(candidates)})")
+
                 try:
                     # Symbol format for API: BTC/USDT -> BTCUSDT
                     api_symbol = symbol.replace("/", "")

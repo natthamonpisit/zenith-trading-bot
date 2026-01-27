@@ -9,7 +9,7 @@ class Radar:
     def __init__(self, spy_instance: PriceSpy):
         self.spy = spy_instance
 
-    def scan_market(self):
+    def scan_market(self, callback=None):
         """Finds interesting assets to trade (Top Volume for now)"""
         print("Radar: Scanning for targets...")
-        return self.spy.get_top_symbols(limit=10)
+        return self.spy.get_top_symbols(limit=10, callback=callback)

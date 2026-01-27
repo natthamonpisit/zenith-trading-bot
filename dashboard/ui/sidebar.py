@@ -28,6 +28,14 @@ def render_sidebar(db):
             st.error(f"⚠️ Connection Error: {e}")
             st.caption("Retrying DB...")
         
+        # Live Activity Details
+        try:
+            status_detail = db.table("bot_config").select("value").eq("key", "BOT_STATUS_DETAIL").execute()
+            if status_detail.data:
+                msg = status_detail.data[0]['value'].replace('"', '')
+                st.info(f"📋 {msg}")
+        except: pass
+        
         st.markdown("---")
         
         # Navigation
