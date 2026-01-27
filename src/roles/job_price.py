@@ -1,5 +1,4 @@
-import ccxt.pro as ccxt  # Use Pro for potential websocket, but standard ccxt is fine for REST
-import ccxt
+import ccxt # Standard CCXT (Free Version)
 import pandas as pd
 import os
 from dotenv import load_dotenv
