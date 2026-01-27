@@ -1,11 +1,35 @@
 """
 Authentication module for Streamlit dashboard.
 
-Provides password protection using Streamlit secrets.
+Provides password protection using Streamlit secrets or environment variables.
 """
 
 import streamlit as st
 import hmac
+import os
+
+
+def get_admin_password() -> str:
+    """
+    Get admin password from secrets.toml or environment variable.
+    
+    Priority:
+    1. Streamlit secrets (local development)
+    2. Environment variable ADMIN_PASSWORD (Railway/production)
+    
+    Returns:
+        Admin password string
+    """
+    try:
+        # Try Streamlit secrets first (local)
+        return st.secrets["passwords"]["admin"]
+    except (KeyError, FileNotFoundError):
+        # Fallback to environment variable (Railway)
+        password = os.environ.get("ADMIN_PASSWORD")
+        if not password:
+            st.error("⚠️ No password configured! Set ADMIN_PASSWORD environment variable or secrets.toml")
+            st.stop()
+        return password
 
 
 def check_password() -> bool:
@@ -22,10 +46,13 @@ def check_password() -> bool:
     
     def password_entered():
         """Callback when password is submitted"""
+        # Get configured password
+        admin_password = get_admin_password()
+        
         # Timing-safe comparison to prevent timing attacks
         if hmac.compare_digest(
             st.session_state["password"],
-            st.secrets["passwords"]["admin"]
+            admin_password
         ):
             st.session_state["password_correct"] = True
             # Security: Don't store password in session
@@ -43,7 +70,7 @@ def check_password() -> bool:
             key="password",
             help="Enter your dashboard password"
         )
-        st.info("💡 Set your password in `.streamlit/secrets.toml`")
+        st.info("💡 **Local:** Set in `.streamlit/secrets.toml` | **Railway:** Set `ADMIN_PASSWORD` env var")
         return False
     
     # Password incorrect: show error + retry
