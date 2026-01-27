@@ -138,30 +138,38 @@ class PriceSpy:
              print(f"Spy (Balance) Error: {e}")
              return None
 
-    def get_top_symbols(self, limit=10, callback=None):
-        """Fetches top USDT pairs by 24h Volume (Robust Loop for Binance TH)"""
+    def get_top_symbols(self, limit=30, callback=None):
+        """Fetches top USDT pairs by 24h Volume"""
         try:
             if not self.exchange.markets:
                 self.load_markets_custom()
 
-            # Candidate List (Top 30 Popular Coins on Binance TH)
+            # Expanded Candidate List for Farming Mode
+            # ideally this should be dynamic from API, but for now we list popular ones
             candidates = [
                 "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
                 "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
                 "LTC/USDT", "TRX/USDT", "AVAX/USDT", "ONE/USDT", "FTM/USDT",
                 "SAND/USDT", "GALA/USDT", "NEAR/USDT", "ATOM/USDT", "XLM/USDT",
-                "OP/USDT", "ARB/USDT", "APE/USDT", "JASMY/USDT", "KUB/USDT"
+                "OP/USDT", "ARB/USDT", "APE/USDT", "JASMY/USDT", "KUB/USDT",
+                "SUI/USDT", "SEI/USDT", "WLD/USDT", "ORDI/USDT", "INJ/USDT",
+                "TIA/USDT", "BLUR/USDT", "PENDLE/USDT", "DYDX/USDT", "RUNE/USDT"
             ]
+            
+            # If limit is large (Farming Mode), we should dynamically fetch top volume from exchange if possible
+            # But for stability, we use the extended list + limit slicing
+            
+            target_list = candidates if limit > 20 else candidates[:20]
             
             valid_pairs = []
             import requests
 
-            print(f"Spy: Scanning {len(candidates)} candidates for Top Volume...")
+            print(f"Spy: Scanning {len(target_list)} candidates for Top Volume...")
             
-            for i, symbol in enumerate(candidates):
+            for i, symbol in enumerate(target_list):
                 # Live Status Update (every 3 items to be responsive)
                 if callback and i % 3 == 0:
-                     callback(f"Radar: Scanning {symbol} ({i+1}/{len(candidates)})")
+                     callback(f"Radar: Scanning {symbol} ({i+1}/{len(target_list)})")
 
                 try:
                     # Symbol format for API: BTC/USDT -> BTCUSDT
