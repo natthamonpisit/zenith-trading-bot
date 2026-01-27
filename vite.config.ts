@@ -10,10 +10,9 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
       },
       plugins: [react()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
+      // SECURITY: Do NOT expose API keys to the browser frontend.
+      // Use a backend proxy if the frontend needs to call Gemini.
+      define: {},
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
