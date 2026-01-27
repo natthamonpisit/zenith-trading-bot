@@ -7,7 +7,7 @@ class HeadHunter:
     def __init__(self, db_client=None):
         self.db = db_client
         # Default Config
-        self.min_volume = 10000000 # 10M USDT default
+        self.min_volume = 1000000 # 1M USDT default (Lowered from 10M for easier testing)
         self.universe = "ALL" # ALL, SAFE_LIST, TOP_30
 
     def load_config(self):
@@ -64,15 +64,15 @@ class HeadHunter:
                 
             # B. Volume Check
             if vol < self.min_volume:
-                # Exception: Whitelisted coins can bypass volume check? Maybe not.
-                # Let's say Whitelisted coins MUST still have volume, but maybe lower?
-                # For now, strict volume check.
-                if status != 'WHITELIST': # Whitelist bypasses volume?? No, risky.
-                     # Let's just log it.
-                     pass
-                if vol < self.min_volume:
-                    # print(f"   ⚠️ {symbol}: Low Vol (${vol:,.0f})") # Too noisy
-                    continue
+                # Log rejection for debugging (limited to first 5 per cycle to avoid spam)
+                if len(qualified) < 5: 
+                     print(f"HeadHunter: Rejected {symbol} (Vol ${vol:,.0f} < ${self.min_volume:,.0f})")
+                continue
+
+            # C. Universe Check
+            if self.universe == "SAFE_LIST" and status != 'WHITELIST':
+                 print(f"HeadHunter: Rejected {symbol} (Not Whitelisted)")
+                 continue
 
             # C. Universe Check
             if self.universe == "SAFE_LIST" and status != 'WHITELIST':
