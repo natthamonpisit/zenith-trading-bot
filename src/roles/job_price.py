@@ -1,5 +1,6 @@
 import ccxt # Standard CCXT (Free Version)
 import pandas as pd
+import pandas_ta as ta # Financial Technical Analysis Library
 import os
 from dotenv import load_dotenv
 
@@ -227,41 +228,46 @@ class PriceSpy:
 
     def calculate_indicators(self, df: pd.DataFrame):
         """
-        Calculates Technical Indicators (RSI, MACD)
-        Note: Since pandas_ta had install issues, we implement basic RSI manually or use fallback.
+        Calculates Technical Indicators using PANDAS-TA (Industry Standard Library).
+        Features: RSI, MACD, Bollinger Bands, EMA.
         """
         if df is None or df.empty:
             return None
         
-        # Basic Manual RSI Implementation to avoid dependency hell
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
-        df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
-        
-        # MACD
-        exp1 = df['close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['close'].ewm(span=26, adjust=False).mean()
-        df['macd'] = exp1 - exp2
-        df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
-        
-        # Bollinger Bands (20, 2)
-        df['sma_20'] = df['close'].rolling(window=20).mean()
-        df['std_20'] = df['close'].rolling(window=20).std()
-        df['bb_upper'] = df['sma_20'] + (df['std_20'] * 2)
-        df['bb_lower'] = df['sma_20'] - (df['std_20'] * 2)
-        
-        # Fill NaN
-        cols = ['rsi', 'ema_20', 'ema_50', 'macd', 'signal', 'bb_upper', 'bb_lower']
-        for c in cols:
-            df[c] = df[c].bfill().ffill()
-        
-        return df
+        try:
+            # 1. RSI (Relative Strength Index) - Standard length 14
+            df['rsi'] = df.ta.rsi(length=14)
+            
+            # 2. EMA (Exponential Moving Average)
+            df['ema_20'] = df.ta.ema(length=20)
+            df['ema_50'] = df.ta.ema(length=50)
+            
+            # 3. MACD (Moving Average Convergence Divergence)
+            # Returns a DataFrame with columns: MACD_12_26_9, MACDh_12_26_9 (hist), MACDs_12_26_9 (signal)
+            macd = df.ta.macd(fast=12, slow=26, signal=9)
+            if macd is not None:
+                df['macd'] = macd['MACD_12_26_9']
+                df['signal'] = macd['MACDs_12_26_9']
+                # macd['MACDh_12_26_9'] is the histogram
+                
+            # 4. Bollinger Bands (20, 2)
+            # Returns BBL (Lower), BBM (Mid), BBU (Upper)
+            bb = df.ta.bbands(length=20, std=2)
+            if bb is not None:
+                df['bb_upper'] = bb['BBU_20_2.0']
+                df['bb_lower'] = bb['BBL_20_2.0']
+                df['sma_20'] = bb['BBM_20_2.0'] # Middleware is Simple Moving Average
+            
+            # 5. Fill NaN (backfill first to avoid dropping initial rows)
+            df.bfill(inplace=True) 
+            df.ffill(inplace=True)
+            
+            return df
+            
+        except Exception as e:
+            print(f"Indicator Calc Error (Pandas-TA): {e}")
+            # Fallback not needed if library is installed, but return original df to prevent crash
+            return df
 
 if __name__ == "__main__":
     # Test The Spy
