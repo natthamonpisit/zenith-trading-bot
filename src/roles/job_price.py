@@ -78,7 +78,7 @@ class PriceSpy:
                 'private': 'https://api.binance.th/api/v1',
                 'v3': 'https://api.binance.th/api/v1', # Alias v3 to v1
                 'v1': 'https://api.binance.th/api/v1',
-                # 'sapi': 'https://api.binance.th/sapi/v1', # REMOVE SAPI completely to kill Margin calls
+                'sapi': 'https://api.binance.th/api/v1', # Alias SAPI to API v1 to prevent "missing URL" error
                 'fapiPublic': 'https://api.binance.th/api/v1', 
                 'fapiPrivate': 'https://api.binance.th/api/v1',
                 'dapiPublic': 'https://api.binance.th/api/v1',
