@@ -16,9 +16,15 @@ class Strategist:
     """
     def __init__(self):
         # Ensure API Key is loaded
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        # Using Gemini 2.0 Flash for speed and reasoning balance
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+        if not gemini_key:
+            print("⚠️ GEMINI_API_KEY not found in environment")
+        
+        genai.configure(api_key=gemini_key)
+        
+        # Using Gemini 1.5 Flash (stable, fast, and cost-effective)
+        # Note: gemini-2.0-flash-exp is experimental and may be deprecated
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.db = get_db()
         
         # Circuit breaker for Gemini AI protection
