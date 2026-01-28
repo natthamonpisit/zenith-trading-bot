@@ -52,8 +52,26 @@ def render_wallet_page(db):
         st.success("✅ Connected to Binance successfully!")
         
     except Exception as e:
-        st.error(f"❌ Failed to connect to Binance: {str(e)}")
-        st.info("💡 Check your API credentials and network connection")
+        error_msg = str(e).lower()
+        
+        # Check for specific error types
+        if "restricted location" in error_msg or "service unavailable" in error_msg:
+            st.error("🌍 **Binance API Blocked - Restricted Location**")
+            st.warning("""
+            **Why this happens:**
+            - Binance blocks certain IP addresses/regions for compliance
+            - Streamlit Cloud's servers may be in a restricted region
+            
+            **Solutions:**
+            1. ✅ Use this feature **locally** or on **Railway** (where bot runs)
+            2. Use Binance website directly to check wallet
+            3. Deploy dashboard on a VPS in an allowed region
+            """)
+            st.info("💡 The bot on Railway can still trade normally - this only affects the dashboard view")
+        else:
+            st.error(f"❌ Failed to connect to Binance")
+            st.code(f"Error: {str(e)}", language="text")
+            st.info("💡 Check your API credentials and network connection")
         return
     
     # Fetch balance
