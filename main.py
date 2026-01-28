@@ -33,7 +33,12 @@ head_hunter = HeadHunter(db) # Pass DB for Config/Fundamental Data
 price_spy = PriceSpy()
 news_spy = NewsSpy()
 radar = Radar(price_spy) # Radar uses PriceSpy
+
+# Initialize Strategist early to select AI model
+print("🧠 Initializing AI Strategist...")
 strategist = Strategist()
+print("✅ Strategist ready")
+
 judge = Judge()
 sniper = SniperExecutor(spy_instance=price_spy)
 wallet_sync = WalletSync(db, sniper.exchange)  # Use sniper's exchange instance
