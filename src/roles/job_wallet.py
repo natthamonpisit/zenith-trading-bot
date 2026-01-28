@@ -93,15 +93,24 @@ class WalletSync:
                             price = 0.0
                             
                             if 'binance.th' in self.exchange.urls['api'].get('public', ''):
-                                # Manual fetch for Binance TH
+                                # Manual fetch for Binance TH using REQUESTS (Bypass CCXT completely)
                                 try:
-                                    # Use direct public API call
-                                    ticker_res = self.exchange.publicGetTicker24hr({'symbol': symbol.replace('/', '')})
-                                    price = float(ticker_res['lastPrice'])
-                                except:
-                                    # Fallback to simple ticker
-                                    ticker_res = self.exchange.publicGetTickerPrice({'symbol': symbol.replace('/', '')})
-                                    price = float(ticker_res['price'])
+                                    import requests
+                                    clean_symbol = symbol.replace('/', '')
+                                    url = f"https://api.binance.th/api/v1/ticker/price?symbol={clean_symbol}"
+                                    res = requests.get(url, timeout=5)
+                                    if res.status_code == 200:
+                                        data = res.json()
+                                        price = float(data.get('price', 0.0))
+                                    else:
+                                        # Fallback to 24hr ticker if price endpoint fails
+                                        url2 = f"https://api.binance.th/api/v1/ticker/24hr?symbol={clean_symbol}"
+                                        res2 = requests.get(url2, timeout=5)
+                                        data2 = res2.json()
+                                        price = float(data2.get('lastPrice', 0.0))
+                                except Exception as e:
+                                    print(f"Warning: Manual price fetch failed for {symbol}: {e}")
+                                    price = 0.0
                             else:
                                 # Standard CCXT
                                 ticker = self.exchange.fetch_ticker(symbol)
