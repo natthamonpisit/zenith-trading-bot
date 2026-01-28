@@ -22,9 +22,8 @@ class Strategist:
         
         genai.configure(api_key=gemini_key)
         
-        # Using Gemini 1.5 Flash (stable, fast, and cost-effective)
-        # Note: gemini-2.0-flash-exp is experimental and may be deprecated
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # Dynamic model selection with fallback
+        self.model = self._select_best_model()
         self.db = get_db()
         
         # Circuit breaker for Gemini AI protection
@@ -33,6 +32,53 @@ class Strategist:
             failure_threshold=3,  # Stricter for AI
             timeout=90.0  # Longer recovery for AI
         )
+    
+    def _select_best_model(self):
+        """
+        Dynamically select the best available Gemini model.
+        Tries models in order of preference with automatic fallback.
+        """
+        # Model preference order (newest/best first)
+        preferred_models = [
+            'gemini-2.0-flash-exp',      # Latest experimental (if available)
+            'gemini-2.0-flash',           # Latest stable 2.0
+            'gemini-1.5-flash-latest',    # Latest 1.5 Flash
+            'gemini-1.5-flash',           # Stable 1.5 Flash
+            'gemini-1.5-pro',             # Fallback to Pro
+            'gemini-pro',                 # Legacy fallback
+        ]
+        
+        try:
+            # List all available models
+            available_models = genai.list_models()
+            available_names = [m.name.split('/')[-1] for m in available_models 
+                             if 'generateContent' in m.supported_generation_methods]
+            
+            print(f"🔍 Available Gemini models: {', '.join(available_names[:5])}...")
+            
+            # Try each preferred model in order
+            for model_name in preferred_models:
+                if model_name in available_names:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        print(f"✅ Selected Gemini model: {model_name}")
+                        return model
+                    except Exception as e:
+                        print(f"⚠️ Failed to initialize {model_name}: {e}")
+                        continue
+            
+            # If no preferred model works, use first available
+            if available_names:
+                fallback_model = available_names[0]
+                print(f"⚠️ Using fallback model: {fallback_model}")
+                return genai.GenerativeModel(fallback_model)
+            
+        except Exception as e:
+            print(f"❌ Failed to list models: {e}")
+        
+        # Ultimate fallback (most stable)
+        print("⚠️ Using hardcoded fallback: gemini-1.5-flash")
+        return genai.GenerativeModel('gemini-1.5-flash')
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     def analyze_market(self, snapshot_id, asset_symbol, tech_data):
