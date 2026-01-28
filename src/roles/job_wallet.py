@@ -78,10 +78,6 @@ class WalletSync:
             assets = []
             for asset, amount in raw_balance['total'].items():
                 if amount > 0:  # Only active balances
-            # Prepare asset list (only non-zero balances)
-            assets = []
-            for asset, amount in raw_balance['total'].items():
-                if amount > 0:  # Only active balances
                     # Calculate USD value
                     usd_value = 0.0
                     symbol = f"{asset}/USDT"
