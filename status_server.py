@@ -9,6 +9,10 @@ import time
 from datetime import datetime
 import os
 import sys
+import pytz
+
+# Thailand timezone
+THAILAND_TZ = pytz.timezone('Asia/Bangkok')
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -80,8 +84,12 @@ class StatusHandler(BaseHTTPRequestHandler):
                 last_hb = float(result.data[0]['value'])
                 diff = time.time() - last_hb
                 
+                # Convert to Thailand time
+                utc_time = datetime.fromtimestamp(last_hb, tz=pytz.UTC)
+                thailand_time = utc_time.astimezone(THAILAND_TZ)
+                
                 return {
-                    'timestamp': datetime.fromtimestamp(last_hb).strftime('%Y-%m-%d %H:%M:%S'),
+                    'timestamp': thailand_time.strftime('%Y-%m-%d %H:%M:%S'),
                     'ago_seconds': int(diff),
                     'healthy': diff < 120
                 }
@@ -153,9 +161,23 @@ class StatusHandler(BaseHTTPRequestHandler):
                 'INFO': '#00aaff'
             }.get(log.get('level', 'INFO'), '#ffffff')
             
+            # Convert timestamp to Thailand time
+            try:
+                created_at_str = log.get('created_at', 'N/A')
+                if created_at_str != 'N/A':
+                    # Parse UTC time from database
+                    utc_time = datetime.strptime(created_at_str[:19], '%Y-%m-%dT%H:%M:%S')
+                    utc_time = pytz.UTC.localize(utc_time)
+                    thailand_time = utc_time.astimezone(THAILAND_TZ)
+                    time_display = thailand_time.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    time_display = 'N/A'
+            except:
+                time_display = created_at_str[:19]
+            
             activity_html += f"""
             <tr>
-                <td style="color: #888;">{log.get('created_at', 'N/A')[:19]}</td>
+                <td style="color: #888;">{time_display}</td>
                 <td style="color: #00aaff;">{log.get('role', 'N/A')}</td>
                 <td style="color: {level_color};">{log.get('message', 'N/A')[:100]}</td>
             </tr>
@@ -269,7 +291,7 @@ class StatusHandler(BaseHTTPRequestHandler):
                 </table>
                 
                 <div class="footer">
-                    Auto-refresh every 10 seconds | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                    Auto-refresh every 10 seconds | Last updated: {datetime.now(THAILAND_TZ).strftime('%Y-%m-%d %H:%M:%S')} (Thailand Time)
                 </div>
             </div>
         </body>

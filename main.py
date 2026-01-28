@@ -457,8 +457,18 @@ def start():
         try:
              db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": str(time.time())}).execute()
              print("💓 Heartbeat Initialized in DB")
+             
+             # Set MODE based on config
+             mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
+             if mode_cfg.data:
+                 mode = str(mode_cfg.data[0]['value']).replace('"', '').strip().upper()
+             else:
+                 mode = "SNIPER"  # Default mode
+             
+             db.table("bot_config").upsert({"key": "MODE", "value": mode}).execute()
+             print(f"🎯 MODE set to: {mode}")
         except Exception as e:
-            print(f"Heartbeat init error: {e}")
+            print(f"Heartbeat/Mode init error: {e}")
         
         # Run once immediately
         run_trading_cycle()
