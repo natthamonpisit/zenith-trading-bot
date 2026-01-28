@@ -1,10 +1,12 @@
 import streamlit as st
 import sys
 import os
-from dotenv import load_dotenv
-
-# Load environment variables (for local dev)
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    # Load environment variables (for local dev)
+    load_dotenv()
+except ImportError:
+    pass  # Streamlit Cloud uses secrets, so dotenv is optional
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
