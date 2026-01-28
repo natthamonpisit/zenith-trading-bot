@@ -8,14 +8,109 @@ def render_history_page(db):
     t1, t2 = st.tabs(["🎮 Simulation (Paper)", "💰 Live Trading"])
 
     with t1:
+        render_session_history(db, is_sim=True)
+        st.markdown("---")
         render_pnl_summary(db, is_sim=True)
         render_closed_positions(db, is_sim=True)
         render_signals_table(db, is_sim=True)
 
     with t2:
+        render_session_history(db, is_sim=False)
+        st.markdown("---")
         render_pnl_summary(db, is_sim=False)
         render_closed_positions(db, is_sim=False)
         render_signals_table(db, is_sim=False)
+
+
+def render_session_history(db, is_sim):
+    """Render expandable history of past sessions"""
+    db_mode = "PAPER" if is_sim else "LIVE"
+    try:
+        # Fetch last 5 filtered sessions
+        sessions = db.table("trading_sessions")\
+            .select("*")\
+            .eq("mode", db_mode)\
+            .order("created_at", desc=True)\
+            .limit(5)\
+            .execute()
+
+        if sessions.data:
+            st.markdown(f"#### 📅 Session History (Last 5)")
+            
+            for s in sessions.data:
+                # Prepare Header Info
+                s_name = s.get('session_name', 'Unnamed Session')
+                net_pnl = float(s.get('net_pnl', 0))
+                win_rate = float(s.get('win_rate', 0))
+                trades = int(s.get('total_trades', 0))
+                
+                # Color Coding
+                pnl_icon = "🟢" if net_pnl >= 0 else "🔴"
+                pnl_str = f"${net_pnl:,.2f}"
+                
+                # Expander Label
+                label = f"{pnl_icon} {s_name} | PnL: {pnl_str} | Win Rate: {win_rate:.1f}% ({trades} Trades)"
+                
+                with st.expander(label, expanded=False):
+                    # 1. Metrics Row
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Net P&L", pnl_str)
+                    c2.metric("Win Rate", f"{win_rate:.1f}%")
+                    c3.metric("Profit Factor", f"{float(s.get('profit_factor', 0)):.2f}")
+                    c4.metric("Max Drawdown", f"${float(s.get('max_drawdown', 0)):.2f}")
+                    
+                    # 2. Detailed Trade List for this Session
+                    filters = db.table("positions").select("*, assets(symbol)")\
+                        .eq("session_id", s['id'])\
+                        .order("closed_at", desc=True)\
+                        .execute()
+                        
+                    if filters.data:
+                        render_session_trades(filters.data)
+                    else:
+                        st.info("No trades recorded in this session.")
+
+    except Exception as e:
+        st.error(f"Error loading session history: {e}")
+
+def render_session_trades(positions_data):
+    """Helper to render a mini positions table inside the expander"""
+    if not positions_data: return
+
+    df = pd.DataFrame(positions_data)
+    df['symbol'] = df['assets'].apply(lambda x: x['symbol'] if x else 'UNKNOWN')
+    df['closed_time'] = df['closed_at'].apply(lambda x: to_local_time(x, '%Y-%m-%d %H:%M') if x else 'N/A')
+    df['pnl_display'] = df['pnl'].apply(lambda x: f"${float(x):,.2f}" if x else 'N/A')
+    
+    # Simple Exit Reason Format
+    def safe_format_reason(r):
+        s = str(r)
+        if s.startswith("AI_SELL_SIGNAL"):
+            return "🤖 AI Sell" 
+        return s
+    
+    if 'exit_reason' in df.columns:
+        df['reason'] = df['exit_reason'].apply(safe_format_reason)
+    else:
+        df['reason'] = 'N/A'
+        
+    def color_pnl(val):
+        try:
+             num = float(val.replace('$', '').replace(',', ''))
+             return 'color: #00FF94' if num >= 0 else 'color: #FF4B4B'
+        except: return ''
+
+    st.dataframe(
+        df[['closed_time', 'symbol', 'reason', 'pnl_display']].style.map(color_pnl, subset=['pnl_display']),
+        column_config={
+            'closed_time': 'Time',
+            'symbol': 'Pair',
+            'reason': 'Exit Reason',
+            'pnl_display': 'PnL'
+        },
+        use_container_width=True,
+        hide_index=True
+    )
 
 
 def render_pnl_summary(db, is_sim):
