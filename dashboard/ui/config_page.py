@@ -223,3 +223,50 @@ def render_config_page(db):
                 st.rerun()
             except Exception as e:
                 st.error(f"Save Failed: {e}")
+
+    # --- 5. Danger Zone ---
+    st.markdown("---")
+    st.subheader("🚨 Danger Zone")
+    with st.container(border=True):
+        st.markdown("""
+        **Factory Reset:** This action will **permanently delete** all trading history, positions, logs, and signals.  
+        Your **API Keys** and **Configuration** will be preserved.
+        """)
+        
+        with st.expander("💣 Reveal Reset Controls"):
+            delete_confirm = st.text_input("Type 'DELETE ALL DATA' to confirm:", key="delete_confirm_input")
+            
+            if st.button("🧨 Factory Reset All Data", type="primary"):
+                if delete_confirm == "DELETE ALL DATA":
+                    try:
+                        with st.spinner("Deleting everything..."):
+                            # Logic from scripts/reset_data.py
+                            tables_to_truncate = [
+                                "balance_snapshots", "config_change_log", "positions", "orders", 
+                                "trade_signals", "ai_analysis", "market_snapshots", "performance_analytics", 
+                                "system_logs", "trading_sessions"
+                            ]
+                            
+                            # Clean Tables
+                            for table in tables_to_truncate:
+                                try:
+                                    db.table(table).delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+                                except: pass
+                            
+                            # Reset Sim Wallet
+                            try:
+                                db.table("simulation_portfolio").update({"balance": 1000.0, "total_pnl": 0}).eq("id", 1).execute()
+                            except: pass
+
+                            # Reset Start Time
+                            try:
+                                db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": "0"}).execute()
+                            except: pass
+                        
+                        st.success("✅ Factory Reset Complete! All history has been wiped.")
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Reset Failed: {e}")
+                else:
+                    st.error("❌ Confirmation text does not match.")
