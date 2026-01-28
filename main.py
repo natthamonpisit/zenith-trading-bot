@@ -487,7 +487,12 @@ def start():
 
         # 2. Run Trading Cycle (Can take time)
         print("🚀 Starting First Trading Cycle...")
-        run_trading_cycle()
+        try:
+            run_trading_cycle()
+        except Exception as e:
+             # Log but DO NOT CRASH. The scheduler will try again later.
+             print(f"❌ Initial Trading Cycle Failed: {e}")
+             log_activity("System", f"Initial Trading Cycle Failed: {e}", "ERROR")
 
         # Load trading cycle interval from DB (default 2 minutes)
         try:

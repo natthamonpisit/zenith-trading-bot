@@ -6,6 +6,7 @@ and store it in Supabase, allowing Streamlit dashboard to display
 wallet data without direct Binance API access.
 """
 
+import requests  # For direct API calls (Binance TH Bypass)
 
 class WalletSync:
     """
@@ -95,7 +96,7 @@ class WalletSync:
                             if 'binance.th' in self.exchange.urls['api'].get('public', ''):
                                 # Manual fetch for Binance TH using REQUESTS (Bypass CCXT completely)
                                 try:
-                                    import requests
+                                    # requests is already imported at top level
                                     clean_symbol = symbol.replace('/', '')
                                     url = f"https://api.binance.th/api/v1/ticker/price?symbol={clean_symbol}"
                                     res = requests.get(url, timeout=5)
