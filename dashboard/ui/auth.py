@@ -60,65 +60,47 @@ def check_password() -> bool:
         st.sidebar.success("✅ Authenticated - Bypassing login")
         return True
     
-    def password_entered():
-        """Callback when password is submitted"""
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### 🐛 DEBUG INFO")
-        
-        # Safety check: ensure password key exists
-        if "password" not in st.session_state:
-            st.sidebar.error("❌ Password key NOT in session_state")
-            st.session_state["password_correct"] = False
-            return
-        
-        st.sidebar.success(f"✅ Password entered (length: {len(st.session_state['password'])})")
-            
-        # Get configured password
-        admin_password = get_admin_password()
-        
-        st.sidebar.info(f"🔍 Comparing passwords...")
-        st.sidebar.code(f"Entered: {st.session_state['password'][:3]}***")
-        st.sidebar.code(f"Expected: {admin_password[:3]}***")
-        
-        # Timing-safe comparison to prevent timing attacks
-        if hmac.compare_digest(
-            st.session_state["password"],
-            admin_password
-        ):
-            st.sidebar.success("✅ Password MATCH!")
-            st.session_state["password_correct"] = True
-            # Security: Don't store password in session
-            del st.session_state["password"]
-        else:
-            st.sidebar.error("❌ Password MISMATCH!")
-            st.session_state["password_correct"] = False
-        
-        st.sidebar.markdown(f"**Session State:** `password_correct = {st.session_state.get('password_correct')}`")
-
-    # Password incorrect: show error + retry
-    if st.session_state.get("password_correct") == False:
-        st.markdown("### 🔐 Zenith Trading Bot - Login")
-        st.text_input(
-            "Password", 
-            type="password", 
-            on_change=password_entered,
-            key="password"
-        )
-        st.error("😕 Incorrect password. Please try again.")
-        return False
+    # Show login form
+    st.markdown("### 🔐 Zenith Trading Bot - Login")
     
-    # First run: show login form
-    else:
-        st.markdown("### 🔐 Zenith Trading Bot - Login")
-        st.text_input(
+    # Use st.form to preserve state better than callback
+    with st.form("login_form"):
+        password_input = st.text_input(
             "Password", 
-            type="password", 
-            on_change=password_entered,
-            key="password",
+            type="password",
             help="Enter your dashboard password"
         )
+        submit_button = st.form_submit_button("Login")
+        
+        if submit_button:
+            with st.sidebar:
+                st.markdown("---")
+                st.markdown("### 🐛 DEBUG INFO")
+                st.sidebar.success(f"✅ Password entered (length: {len(password_input)})")
+            
+            # Get configured password
+            admin_password = get_admin_password()
+            
+            with st.sidebar:
+                st.sidebar.info(f"🔍 Comparing passwords...")
+                st.sidebar.code(f"Entered: {password_input[:3]}***")
+                st.sidebar.code(f"Expected: {admin_password[:3]}***")
+            
+            # Timing-safe comparison to prevent timing attacks
+            if hmac.compare_digest(password_input, admin_password):
+                st.sidebar.success("✅ Password MATCH!")
+                st.session_state["password_correct"] = True
+                st.rerun()  # Rerun to show dashboard
+            else:
+                st.sidebar.error("❌ Password MISMATCH!")
+                st.session_state["password_correct"] = False
+                st.error("😕 Incorrect password. Please try again.")
+    
+    # Show info only on first load
+    if st.session_state.get("password_correct") is None:
         st.info("💡 **Streamlit Cloud:** Set secrets in App Settings | **Local:** Set in `.streamlit/secrets.toml`")
-        return False
+    
+    return False
 
 
 def logout():
