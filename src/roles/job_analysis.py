@@ -48,6 +48,8 @@ class Strategist:
             'gemini-pro',                 # Legacy fallback
         ]
         
+        selected_model_name = None
+        
         try:
             # List all available models
             available_models = genai.list_models()
@@ -61,7 +63,18 @@ class Strategist:
                 if model_name in available_names:
                     try:
                         model = genai.GenerativeModel(model_name)
+                        selected_model_name = model_name
                         print(f"✅ Selected Gemini model: {model_name}")
+                        
+                        # Save to database for status monitoring
+                        try:
+                            self.db.table("bot_config").upsert({
+                                "key": "AI_MODEL",
+                                "value": model_name
+                            }).execute()
+                        except Exception as e:
+                            print(f"⚠️ Failed to save AI model to DB: {e}")
+                        
                         return model
                     except Exception as e:
                         print(f"⚠️ Failed to initialize {model_name}: {e}")
@@ -70,14 +83,36 @@ class Strategist:
             # If no preferred model works, use first available
             if available_names:
                 fallback_model = available_names[0]
+                selected_model_name = fallback_model
                 print(f"⚠️ Using fallback model: {fallback_model}")
+                
+                # Save to database
+                try:
+                    self.db.table("bot_config").upsert({
+                        "key": "AI_MODEL",
+                        "value": fallback_model
+                    }).execute()
+                except:
+                    pass
+                
                 return genai.GenerativeModel(fallback_model)
             
         except Exception as e:
             print(f"❌ Failed to list models: {e}")
         
         # Ultimate fallback (most stable)
-        print("⚠️ Using hardcoded fallback: gemini-1.5-flash")
+        selected_model_name = 'gemini-1.5-flash'
+        print(f"⚠️ Using hardcoded fallback: {selected_model_name}")
+        
+        # Save to database
+        try:
+            self.db.table("bot_config").upsert({
+                "key": "AI_MODEL",
+                "value": selected_model_name
+            }).execute()
+        except:
+            pass
+        
         return genai.GenerativeModel('gemini-1.5-flash')
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)

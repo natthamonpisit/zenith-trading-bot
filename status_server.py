@@ -118,11 +118,20 @@ class StatusHandler(BaseHTTPRequestHandler):
         except:
             apis['Binance'] = {'status': '❌ Error', 'healthy': False}
         
-        # Gemini AI
+        # Gemini AI + Show current model
         try:
             gemini_key = os.environ.get("GEMINI_API_KEY")
             if gemini_key:
-                apis['Gemini AI'] = {'status': '✅ Configured', 'healthy': True}
+                # Get current AI model from database
+                try:
+                    result = db.table("bot_config").select("value").eq("key", "AI_MODEL").execute()
+                    if result.data:
+                        ai_model = result.data[0]['value']
+                        apis['Gemini AI'] = {'status': f'✅ Active ({ai_model})', 'healthy': True}
+                    else:
+                        apis['Gemini AI'] = {'status': '✅ Configured', 'healthy': True}
+                except:
+                    apis['Gemini AI'] = {'status': '✅ Configured', 'healthy': True}
             else:
                 apis['Gemini AI'] = {'status': '⚠️ Not Configured', 'healthy': False}
         except:
