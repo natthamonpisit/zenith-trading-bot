@@ -76,15 +76,19 @@ def log_activity(role, message, level="INFO"):
     except Exception as e:
         print(f"Log Error: {e}")
 
-def process_pair(pair, timeframe):
-    """Encapsulated logic for a single trading pair"""
+def process_pair(pair, timeframe, intent="ENTRY"):
+    """
+    Encapsulated logic for a single trading pair with explicit INTENT.
+    :param intent: "ENTRY" (Look for BUY) or "EXIT" (Look for SELL)
+    """
     if is_bot_stopped():
         print(f"⛔ Bot STOPPED. Skipping {pair}.")
         return
     try:
         # 1. SPY A (Price)
-        print(f"--- 1. SPY A: Fetching Price for {pair} ({timeframe}) ---")
-        log_activity("Spy", f"🕵️ Scanning {pair} ({timeframe}) market...")
+        print(f"--- 1. SPY A: Fetching Price for {pair} ({timeframe}) [Intent: {intent}] ---")
+        # log_activity("Spy", f"🕵️ Scanning {pair} ({timeframe}) market...") # Reduce log noise
+        
         df = price_spy.fetch_ohlcv(pair, timeframe)
         if df is None: 
             print(f"❌ Data Fetch Failed for {pair}")
@@ -107,43 +111,19 @@ def process_pair(pair, timeframe):
         else:
             asset_id = asset.data[0]['id']
 
-        # Determine current mode (moved up to use for position checking)
-        try:
-            mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
-            mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
-        except Exception as e:
-            # print(f"Mode fetch error: {e}")
-            mode = "PAPER"
-            
-        is_sim = (mode == "PAPER")
-
-        # Check if we hold a position for this asset in the current mode
-        has_position = False
-        try:
-            existing_pos = db.table("positions").select("id")\
-                .eq("asset_id", asset_id)\
-                .eq("is_open", True)\
-                .eq("is_sim", is_sim)\
-                .limit(1).execute()
-            has_position = bool(existing_pos.data)
-            if has_position:
-                print(f"[{pair}] Holding Position ({mode}). Checking for SELL/EXIT...")
-        except Exception as e:
-            print(f"Position check error: {e}")
-
         # Send only relevant columns to reduce prompt size and avoid timestamp/NaN issues
         tech_cols = ['close', 'open', 'high', 'low', 'volume', 'rsi', 'macd', 'signal', 'ema_20', 'ema_50', 'atr']
         available_cols = [c for c in tech_cols if c in df.columns]
         tech_snapshot = df[available_cols].tail(5).fillna(0).round(6).to_dict()
         
-        # Call AI with context
-        analysis = strategist.analyze_market(None, pair, tech_snapshot, has_position=has_position)
+        # Call AI with explicit INTENT
+        analysis = strategist.analyze_market(None, pair, tech_snapshot, intent=intent)
         if not analysis: 
             print("❌ AI Analysis Failed")
             return
         
         # LOG AI SUMMARY
-        log_activity("Strategist", f"[{pair}] Sentiment: {analysis.get('sentiment_score')} | Confidence: {analysis.get('confidence')}%")
+        log_activity("Strategist", f"[{pair}] {intent} Analysis | Rec: {analysis.get('recommendation')} | Conf: {analysis.get('confidence')}%")
 
         # 3. JUDGE (Rules)
         print("3. Judge Evaluate...")
@@ -153,7 +133,7 @@ def process_pair(pair, timeframe):
             mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
             mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
         except Exception as e:
-            print(f"Mode fetch error: {e}")
+            # print(f"Mode fetch error: {e}")
             mode = "PAPER"
 
         if mode == "PAPER":
@@ -192,6 +172,14 @@ def process_pair(pair, timeframe):
         if ai_rec in ['WAIT', 'HOLD']:
             print(f"   - AI Recommendation: {ai_rec} -- Skipping (non-actionable)")
             return
+            
+        # SAFETY: Double Check Intent vs Recommendation
+        if intent == "ENTRY" and ai_rec == "SELL":
+            print("   - ⚠️ SAFETY: AI recommended SELL during ENTRY scan. Ignoring.")
+            return
+        if intent == "EXIT" and ai_rec == "BUY":
+            print("   - ⚠️ SAFETY: AI recommended BUY during EXIT scan. Ignoring.")
+            return
 
         verdict = judge.evaluate(ai_data, tech_data, balance, is_sim=is_sim, asset_id=asset_id)
         print(f"   - AI Recommendation: {ai_rec} (Confidence: {ai_data['confidence']}%)")
@@ -210,6 +198,12 @@ def process_pair(pair, timeframe):
             "judge_reason": verdict.reason,
             "is_sim": is_sim
         }
+        
+        # For SELL signals, attach default exit reason if Approved
+        # (This is handled in executor by default, but we can be explicit here if we want)
+        if ai_rec == "SELL":
+             signal_data['exit_reason'] = "AI_SELL_SIGNAL"
+             
         signal_entry = db.table("trade_signals").insert(signal_data).execute()
         
         # 4. SNIPER (Executor)
@@ -220,6 +214,10 @@ def process_pair(pair, timeframe):
             full_signal = signal_entry.data[0]
             full_signal['assets'] = {'symbol': pair} # Manual hydrate for simplicity
             full_signal['order_size'] = verdict.size  # USDT amount from Judge
+            
+            # Pass exit reason explicitly to executor if SELL
+            if ai_rec == "SELL":
+                full_signal['exit_reason'] = "AI_SELL_SIGNAL"
 
             success = sniper.execute_order(full_signal)
             if success:
@@ -519,12 +517,56 @@ def run_trading_cycle():
         remaining_seconds = interval_seconds - (time.time() - float(last_farm.data[0]['value']))
         next_farm_in = max(0, int(remaining_seconds / 3600))
         
-        update_status_db(f"🔫 Sniper Mode: Hunting {len(candidates)} pairs (Next Farm: {next_farm_in}h)")
+        # Determine Mode/Sim Status for filtering
+        try:
+            mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
+            current_mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
+            is_sim_mode = (current_mode == "PAPER")
+        except:
+            current_mode = "PAPER"
+            is_sim_mode = True
+
+        # === PHASE A: HUNTING (BUY Opportunities) ===
+        # Scan Active Candidates -> Check for ENTRY only
         
-        for i, symbol in enumerate(candidates):
+        # Filter out held positions from candidates to avoid redundant BUY checks (unless DCA logic added later)
+        open_positions = []
+        try:
+            open_pos_res = db.table("positions").select("asset_id, assets(symbol)")\
+                .eq("is_open", True)\
+                .eq("is_sim", is_sim_mode)\
+                .execute()
+            open_positions = open_pos_res.data if open_pos_res.data else []
+        except Exception as e:
+            print(f"Error fetching open positions: {e}")
+
+        held_symbols = set()
+        for pos in open_positions:
+            sym = pos.get('assets', {}).get('symbol') if pos.get('assets') else None
+            if sym: held_symbols.add(sym)
+
+        buy_candidates = [c for c in candidates if c not in held_symbols]
+        
+        update_status_db(f"🔫 Sniper Phase A: Hunting BUYs in {len(buy_candidates)} pairs (Next Farm: {next_farm_in}h)")
+        
+        for i, symbol in enumerate(buy_candidates):
             set_heartbeat()
-            process_pair(symbol, timeframe)
+            # Loop 1: ENTRY ONLY
+            process_pair(symbol, timeframe, intent="ENTRY")
             time.sleep(1)
+
+        # === PHASE B: MANAGING (SELL Opportunities) ===
+        # Scan Open Positions -> Check for EXIT only
+        
+        if held_symbols:
+            update_status_db(f"🔫 Sniper Phase B: Managing exits for {len(held_symbols)} positions")
+            for symbol in held_symbols:
+                set_heartbeat()
+                # Loop 2: EXIT ONLY
+                process_pair(symbol, timeframe, intent="EXIT")
+                time.sleep(1)
+        else:
+             print("ℹ️ No open positions to manage.")
             
     except Exception as e:
         print(f"Trading Cycle Error: {e}")

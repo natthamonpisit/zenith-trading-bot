@@ -119,17 +119,17 @@ class Strategist:
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-    def analyze_market(self, snapshot_id, asset_symbol, tech_data, has_position=False):
+    def analyze_market(self, snapshot_id, asset_symbol, tech_data, intent="ENTRY"):
         """
         Sends market data to Gemini and expects a strict JSON response.
-        :param has_position: Boolean, true if we currently hold this asset
+        :param intent: "ENTRY" (look for BUY) or "EXIT" (look for SELL)
         """
         
-        # Customize task based on holding status
-        if has_position:
-            task_instruction = "Current Status: HOLDING POSITION. Evaluate for SELL (Exit) or HOLD. Only recommend BUY if strong dip (DCA)."
-            valid_actions = '"BUY" | "SELL" | "HOLD"'
-        else:
+        # Customize task based on intent
+        if intent == "EXIT":
+            task_instruction = "Current Status: HOLDING POSITION. Evaluate for SELL (Exit) or HOLD. DO NOT recommend BUY."
+            valid_actions = '"SELL" | "HOLD"'
+        else: # ENTRY
             task_instruction = "Current Status: NO POSITION. Evaluate for BUY (Entry) only. DO NOT recommend SELL."
             valid_actions = '"BUY" | "WAIT"'
 
