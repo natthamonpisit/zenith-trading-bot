@@ -107,11 +107,37 @@ def process_pair(pair, timeframe):
         else:
             asset_id = asset.data[0]['id']
 
+        # Determine current mode (moved up to use for position checking)
+        try:
+            mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
+            mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
+        except Exception as e:
+            # print(f"Mode fetch error: {e}")
+            mode = "PAPER"
+            
+        is_sim = (mode == "PAPER")
+
+        # Check if we hold a position for this asset in the current mode
+        has_position = False
+        try:
+            existing_pos = db.table("positions").select("id")\
+                .eq("asset_id", asset_id)\
+                .eq("is_open", True)\
+                .eq("is_sim", is_sim)\
+                .limit(1).execute()
+            has_position = bool(existing_pos.data)
+            if has_position:
+                print(f"[{pair}] Holding Position ({mode}). Checking for SELL/EXIT...")
+        except Exception as e:
+            print(f"Position check error: {e}")
+
         # Send only relevant columns to reduce prompt size and avoid timestamp/NaN issues
         tech_cols = ['close', 'open', 'high', 'low', 'volume', 'rsi', 'macd', 'signal', 'ema_20', 'ema_50', 'atr']
         available_cols = [c for c in tech_cols if c in df.columns]
         tech_snapshot = df[available_cols].tail(5).fillna(0).round(6).to_dict()
-        analysis = strategist.analyze_market(None, pair, tech_snapshot)
+        
+        # Call AI with context
+        analysis = strategist.analyze_market(None, pair, tech_snapshot, has_position=has_position)
         if not analysis: 
             print("❌ AI Analysis Failed")
             return

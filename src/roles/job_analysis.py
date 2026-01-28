@@ -118,16 +118,27 @@ class Strategist:
         return genai.GenerativeModel('gemini-1.5-flash')
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-    def analyze_market(self, snapshot_id, asset_symbol, tech_data):
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
+    def analyze_market(self, snapshot_id, asset_symbol, tech_data, has_position=False):
         """
         Sends market data to Gemini and expects a strict JSON response.
+        :param has_position: Boolean, true if we currently hold this asset
         """
         
+        # Customize task based on holding status
+        if has_position:
+            task_instruction = "Current Status: HOLDING POSITION. Evaluate for SELL (Exit) or HOLD. Only recommend BUY if strong dip (DCA)."
+            valid_actions = '"BUY" | "SELL" | "HOLD"'
+        else:
+            task_instruction = "Current Status: NO POSITION. Evaluate for BUY (Entry) only. DO NOT recommend SELL."
+            valid_actions = '"BUY" | "WAIT"'
+
         prompt = f"""
         You are a Senior Crypto Trader & Risk Analyst (The Strategist). 
         Analyze the following asset: {asset_symbol}.
         
-        Technical Data:
+        {task_instruction}
+        
         Technical Data:
         {json.dumps(tech_data, default=str)}
         
@@ -142,7 +153,7 @@ class Strategist:
             "sentiment_score": float,
             "confidence": int,
             "reasoning": "string",
-            "recommendation": "BUY" | "SELL" | "WAIT"
+            "recommendation": {valid_actions}
         }}
         """
         
