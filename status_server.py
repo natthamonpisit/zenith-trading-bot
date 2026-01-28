@@ -33,9 +33,10 @@ class StatusHandler(BaseHTTPRequestHandler):
             heartbeat = self._get_heartbeat(db)
             api_status = self._check_api_connections(db)
             recent_activity = self._get_recent_activity(db)
-            
+            pnl_summary = self._get_pnl_summary(db)
+
             # Generate HTML
-            html = self._generate_html(bot_status, heartbeat, api_status, recent_activity)
+            html = self._generate_html(bot_status, heartbeat, api_status, recent_activity, pnl_summary)
             
             # Send response
             self.send_response(200)
@@ -155,17 +156,57 @@ class StatusHandler(BaseHTTPRequestHandler):
                 .order("created_at", desc=True)\
                 .limit(5)\
                 .execute()
-            
+
             return logs.data if logs.data else []
         except:
             return []
+
+    def _get_pnl_summary(self, db):
+        """Get P&L summary for both live and sim modes"""
+        try:
+            result = {
+                'live': {'total_pnl': 0, 'win_rate': 0, 'trades': 0, 'wins': 0},
+                'sim': {'total_pnl': 0, 'win_rate': 0, 'trades': 0, 'wins': 0}
+            }
+
+            # Live positions
+            live_closed = db.table("positions").select("pnl").eq("is_sim", False).eq("is_open", False).execute()
+            if live_closed.data:
+                pnl_values = [float(p['pnl']) for p in live_closed.data if p.get('pnl') is not None]
+                if pnl_values:
+                    result['live']['total_pnl'] = sum(pnl_values)
+                    result['live']['trades'] = len(pnl_values)
+                    result['live']['wins'] = len([p for p in pnl_values if p > 0])
+                    result['live']['win_rate'] = (result['live']['wins'] / len(pnl_values) * 100)
+
+            # Sim positions
+            sim_closed = db.table("positions").select("pnl").eq("is_sim", True).eq("is_open", False).execute()
+            if sim_closed.data:
+                pnl_values = [float(p['pnl']) for p in sim_closed.data if p.get('pnl') is not None]
+                if pnl_values:
+                    result['sim']['total_pnl'] = sum(pnl_values)
+                    result['sim']['trades'] = len(pnl_values)
+                    result['sim']['wins'] = len([p for p in pnl_values if p > 0])
+                    result['sim']['win_rate'] = (result['sim']['wins'] / len(pnl_values) * 100)
+
+            return result
+        except:
+            return {'live': {'total_pnl': 0, 'win_rate': 0, 'trades': 0}, 'sim': {'total_pnl': 0, 'win_rate': 0, 'trades': 0}}
     
-    def _generate_html(self, bot_status, heartbeat, api_status, recent_activity):
+    def _generate_html(self, bot_status, heartbeat, api_status, recent_activity, pnl_summary=None):
         """Generate status HTML"""
-        
+
         # Status color
         status_color = '#00ff00' if bot_status['running'] else '#ff0000'
         hb_color = '#00ff00' if heartbeat['healthy'] else '#ff0000'
+
+        # P&L colors
+        if pnl_summary:
+            live_pnl_color = '#00ff00' if pnl_summary['live']['total_pnl'] >= 0 else '#ff0000'
+            sim_pnl_color = '#00ff00' if pnl_summary['sim']['total_pnl'] >= 0 else '#ff0000'
+        else:
+            live_pnl_color = '#888'
+            sim_pnl_color = '#888'
         
         # Recent activity HTML
         activity_html = ""
@@ -291,7 +332,23 @@ class StatusHandler(BaseHTTPRequestHandler):
                 <table>
                     {api_html}
                 </table>
-                
+
+                <h2>📈 Trading Performance</h2>
+                <table>
+                    <tr>
+                        <td style="color: #00aaff;">LIVE Trading</td>
+                        <td style="color: {live_pnl_color};">${pnl_summary['live']['total_pnl']:,.2f}</td>
+                        <td>Win Rate: {pnl_summary['live']['win_rate']:.1f}%</td>
+                        <td>{pnl_summary['live']['trades']} trades</td>
+                    </tr>
+                    <tr>
+                        <td style="color: #00aaff;">SIM Trading</td>
+                        <td style="color: {sim_pnl_color};">${pnl_summary['sim']['total_pnl']:,.2f}</td>
+                        <td>Win Rate: {pnl_summary['sim']['win_rate']:.1f}%</td>
+                        <td>{pnl_summary['sim']['trades']} trades</td>
+                    </tr>
+                </table>
+
                 <h2>📋 Recent Activity (Last 5)</h2>
                 <table>
                     <thead>

@@ -60,7 +60,44 @@ def render_wallet_page(db):
             st.metric("🪙 Number of Assets", num_assets)
         with col3:
             st.metric("🏆 Largest Holding", largest_asset)
-        
+
+        # Realized P&L Summary
+        st.markdown("---")
+        st.markdown("### 📈 Realized Trading P&L")
+
+        try:
+            # Get closed positions for LIVE mode
+            closed_live = db.table("positions").select("pnl").eq("is_sim", False).eq("is_open", False).execute()
+
+            if closed_live.data:
+                pnl_values = [float(p['pnl']) for p in closed_live.data if p.get('pnl') is not None]
+                if pnl_values:
+                    total_pnl = sum(pnl_values)
+                    wins = len([p for p in pnl_values if p > 0])
+                    losses = len([p for p in pnl_values if p < 0])
+                    total_trades = len(pnl_values)
+                    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+                    best = max(pnl_values)
+                    worst = min(pnl_values)
+
+                    pnl_color = "#00FF94" if total_pnl >= 0 else "#FF4B4B"
+
+                    pc1, pc2, pc3, pc4 = st.columns(4)
+                    with pc1:
+                        st.metric("Total Realized P&L", f"${total_pnl:,.2f}")
+                    with pc2:
+                        st.metric("Win Rate", f"{win_rate:.1f}%", f"{wins}W / {losses}L")
+                    with pc3:
+                        st.metric("Best Trade", f"${best:,.2f}")
+                    with pc4:
+                        st.metric("Worst Trade", f"${worst:,.2f}")
+                else:
+                    st.info("No closed live trades with P&L data yet. Start trading to see your performance!")
+            else:
+                st.info("No closed live trades yet. Your P&L summary will appear here after your first trade closes.")
+        except Exception as e:
+            st.warning(f"Could not load P&L data: {e}")
+
         st.markdown("---")
         
         # Display assets table

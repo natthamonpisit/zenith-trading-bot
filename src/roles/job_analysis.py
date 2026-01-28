@@ -168,30 +168,189 @@ class Strategist:
                 'recommendation': 'WAIT'
             }
 
-    def generate_performance_report(self, trade_history, days_range):
+    def generate_performance_report(self, trade_history, days_range, is_sim=False):
         """
-        Generates a summary report of trading performance.
+        Generates a comprehensive performance report with structured data analysis.
         """
+        # Gather structured performance data
+        performance_data = self._gather_performance_data(is_sim)
+
         prompt = f"""
-        You are a Portfolio Manager writing a performance review.
+        You are a Senior Portfolio Manager and Trading Analyst writing a comprehensive performance review.
         Period: Last {days_range} days.
-        
-        Trade History Data:
-        {json.dumps(trade_history, default=str)}
-        
-        Task:
-        1. Summarize the overall trading activity (Total signals, Win Rate if applicable, Strategy behavior).
-        2. Identify patterns in the AI's decision making (Why were certain trades rejected?).
-        3. Give constructive feedback on the strategy settings.
-        4. Use a professional, encouraging tone.
-        
-        Output: Markdown formatted text.
+        Mode: {"SIMULATION (Paper Trading)" if is_sim else "LIVE Trading"}
+
+        === STRUCTURED PERFORMANCE DATA ===
+
+        **P&L Summary:**
+        - Total Realized P&L: ${performance_data['total_pnl']:,.2f}
+        - Total Trades Closed: {performance_data['total_trades']}
+        - Winning Trades: {performance_data['wins']} ({performance_data['win_rate']:.1f}%)
+        - Losing Trades: {performance_data['losses']}
+        - Best Trade: ${performance_data['best_trade']:,.2f}
+        - Worst Trade: ${performance_data['worst_trade']:,.2f}
+        - Average Win: ${performance_data['avg_win']:,.2f}
+        - Average Loss: ${performance_data['avg_loss']:,.2f}
+
+        **Trade Signal Statistics:**
+        - Total Signals Generated: {performance_data['total_signals']}
+        - Approved (Executed): {performance_data['executed_signals']}
+        - Rejected: {performance_data['rejected_signals']}
+        - Approval Rate: {performance_data['approval_rate']:.1f}%
+
+        **Judge Guardrail Breakdown (Rejection Reasons):**
+        {json.dumps(performance_data['rejection_reasons'], indent=2)}
+
+        **Top Traded Symbols:**
+        {json.dumps(performance_data['top_symbols'], indent=2)}
+
+        **Recent Trade History (Last 20):**
+        {json.dumps(trade_history[:20] if trade_history else [], default=str, indent=2)}
+
+        === ANALYSIS TASK ===
+
+        1. **Executive Summary**: Provide a 2-3 sentence overview of overall performance.
+
+        2. **P&L Analysis**:
+           - Assess profitability and risk-adjusted returns
+           - Comment on win rate and average win/loss ratio
+           - Identify any concerning patterns
+
+        3. **Signal Quality Review**:
+           - Analyze the approval/rejection ratio
+           - Which guardrails are triggering most? Is this appropriate?
+           - Are there missed opportunities or over-filtering?
+
+        4. **Symbol Performance**:
+           - Which coins performed best/worst?
+           - Any recommendations for whitelist/blacklist adjustments?
+
+        5. **Strategy Recommendations**:
+           - Specific parameter adjustments (RSI threshold, AI confidence, position sizing)
+           - Risk management improvements
+           - Timing or market condition observations
+
+        6. **Action Items**:
+           - 3-5 concrete, actionable recommendations ranked by priority
+
+        Output: Well-formatted Markdown with headers, bullet points, and clear sections.
+        Be data-driven and specific in your analysis. Avoid generic advice.
         """
         try:
-            response = self.model.generate_content(prompt, request_options={"timeout": 60})
+            response = self.model.generate_content(prompt, request_options={"timeout": 90})
             return response.text
         except Exception as e:
             return f"Failed to generate report: {e}"
+
+    def _gather_performance_data(self, is_sim=False):
+        """
+        Gathers structured performance metrics from the database.
+        """
+        data = {
+            'total_pnl': 0,
+            'total_trades': 0,
+            'wins': 0,
+            'losses': 0,
+            'win_rate': 0,
+            'best_trade': 0,
+            'worst_trade': 0,
+            'avg_win': 0,
+            'avg_loss': 0,
+            'total_signals': 0,
+            'executed_signals': 0,
+            'rejected_signals': 0,
+            'approval_rate': 0,
+            'rejection_reasons': {},
+            'top_symbols': []
+        }
+
+        try:
+            # Get closed positions with P&L
+            closed_positions = self.db.table("positions")\
+                .select("*, assets(symbol)")\
+                .eq("is_sim", is_sim)\
+                .eq("is_open", False)\
+                .execute()
+
+            if closed_positions.data:
+                pnl_values = [float(p['pnl']) for p in closed_positions.data if p.get('pnl') is not None]
+
+                if pnl_values:
+                    data['total_pnl'] = sum(pnl_values)
+                    data['total_trades'] = len(pnl_values)
+                    data['wins'] = len([p for p in pnl_values if p > 0])
+                    data['losses'] = len([p for p in pnl_values if p <= 0])
+                    data['win_rate'] = (data['wins'] / data['total_trades'] * 100) if data['total_trades'] > 0 else 0
+                    data['best_trade'] = max(pnl_values) if pnl_values else 0
+                    data['worst_trade'] = min(pnl_values) if pnl_values else 0
+
+                    winning_trades = [p for p in pnl_values if p > 0]
+                    losing_trades = [p for p in pnl_values if p < 0]
+                    data['avg_win'] = sum(winning_trades) / len(winning_trades) if winning_trades else 0
+                    data['avg_loss'] = sum(losing_trades) / len(losing_trades) if losing_trades else 0
+
+                # Symbol performance
+                symbol_pnl = {}
+                for p in closed_positions.data:
+                    symbol = p['assets']['symbol'] if p.get('assets') else 'UNKNOWN'
+                    pnl = float(p['pnl']) if p.get('pnl') else 0
+                    if symbol not in symbol_pnl:
+                        symbol_pnl[symbol] = {'total_pnl': 0, 'trades': 0}
+                    symbol_pnl[symbol]['total_pnl'] += pnl
+                    symbol_pnl[symbol]['trades'] += 1
+
+                # Sort by total P&L
+                data['top_symbols'] = sorted(
+                    [{'symbol': k, **v} for k, v in symbol_pnl.items()],
+                    key=lambda x: x['total_pnl'],
+                    reverse=True
+                )[:10]
+
+            # Get trade signal statistics
+            all_signals = self.db.table("trade_signals")\
+                .select("status, judge_reason")\
+                .eq("is_sim", is_sim)\
+                .execute()
+
+            if all_signals.data:
+                data['total_signals'] = len(all_signals.data)
+                data['executed_signals'] = len([s for s in all_signals.data if s['status'] == 'EXECUTED'])
+                data['rejected_signals'] = len([s for s in all_signals.data if s['status'] == 'REJECTED'])
+                data['approval_rate'] = (data['executed_signals'] / data['total_signals'] * 100) if data['total_signals'] > 0 else 0
+
+                # Analyze rejection reasons
+                rejection_reasons = {}
+                for s in all_signals.data:
+                    if s['status'] == 'REJECTED' and s.get('judge_reason'):
+                        reason = s['judge_reason']
+                        # Categorize reasons
+                        if 'RSI' in reason:
+                            key = 'RSI Veto'
+                        elif 'EMA' in reason or 'Trend' in reason:
+                            key = 'Trend Veto (EMA)'
+                        elif 'MACD' in reason or 'Momentum' in reason:
+                            key = 'Momentum Veto (MACD)'
+                        elif 'confidence' in reason.lower() or 'Uncertainty' in reason:
+                            key = 'AI Confidence Too Low'
+                        elif 'Position Limit' in reason:
+                            key = 'Max Positions Reached'
+                        elif 'Duplicate' in reason:
+                            key = 'Duplicate Position'
+                        elif 'WAIT' in reason or 'HOLD' in reason:
+                            key = 'AI Recommended WAIT/HOLD'
+                        elif 'No open position' in reason:
+                            key = 'SELL Without Position'
+                        else:
+                            key = 'Other'
+
+                        rejection_reasons[key] = rejection_reasons.get(key, 0) + 1
+
+                data['rejection_reasons'] = rejection_reasons
+
+        except Exception as e:
+            print(f"[Strategist] Error gathering performance data: {e}")
+
+        return data
 
 # --- THE JUDGE (LOGIC) ---
 class TradeDecision(BaseModel):

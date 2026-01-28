@@ -88,6 +88,52 @@ Core tables: `bot_config`, `assets`, `positions`, `trade_signals`, `simulation_p
 
 Required: `SUPABASE_URL`, `SUPABASE_KEY`, `GEMINI_API_KEY`, `BINANCE_API_KEY`, `BINANCE_SECRET`, `BINANCE_API_URL` (https://api.binance.th for TH). See `.env.example`.
 
+## Planned Features / TODO
+
+### P&L Display & Performance Analytics
+**Status**: Data is stored (`positions.exit_price`, `positions.pnl`) but not surfaced in UI.
+**Where to implement**:
+1. `dashboard/ui/history_page.py` — Primary: table of closed positions showing symbol, entry_avg, exit_price, quantity, pnl, return %. This is the main trade history view.
+2. `dashboard/ui/dashboard_page.py` — Summary card: total realized P&L, win rate, best/worst trade.
+3. `dashboard/ui/wallet_page.py` — Cumulative realized P&L alongside wallet balance.
+4. `status_server.py` — Simple line: total PnL + win rate for Railway quick-check.
+5. `Strategist.generate_performance_report()` — Feed closed positions with pnl data for AI performance review (function exists but lacks real data).
+
+### AI Performance Analysis Report (Post-Core)
+**Status**: `Strategist.generate_performance_report()` exists but uses a generic prompt with no structured data. Build after all core functions are stable.
+**Data to feed AI**:
+1. Closed positions: entry_avg, exit_price, pnl, return %, hold duration, symbol.
+2. Trade signals: total count, approved/rejected ratio, rejection reasons breakdown.
+3. Judge guardrail stats: how often RSI veto, EMA veto, MACD veto, confidence reject, position limit triggered.
+4. Farming history: candidates per cycle, recurring symbols.
+5. Win rate by symbol and by time window.
+6. Config change impact: before/after comparison when settings change.
+7. Trailing stop vs AI SELL: which exit method captured more profit.
+**AI output should include**: P&L summary, best/worst coins, config recommendations, pattern observations, blacklist suggestions.
+
+### Simulation Page Fixes (`dashboard/ui/simulation_page.py`)
+**Issues found**:
+1. Unrealized PnL % is hardcoded `(unrealized_pnl/1000)*100` — should divide by actual `balance`, not 1000.
+2. Fetches tickers twice per open position (line 23 in summary loop, line 43 in card loop). Should fetch once and reuse.
+3. History table shows signals but not exit_price or pnl from closed positions.
+
+### Missing ATR Trailing Stop UI in Config Page (`dashboard/ui/config_page.py`)
+**Status**: Config page has basic trailing stop settings (enable, trail %, min profit %) but is missing:
+1. `TRAILING_STOP_USE_ATR` — Toggle to switch between fixed % and ATR-based mode.
+2. `TRAILING_STOP_ATR_MULTIPLIER` — ATR multiplier input (default 2.0).
+These keys exist in bot_config and are used by `main.py:203-212` but have no dashboard UI.
+
+### Fundamental Lab Enhancement
+**Status**: Currently a manual CRUD page (`dashboard/ui/fundamental_page.py`) for the `fundamental_coins` table. HeadHunter only uses the `status` field (WHITELIST/BLACKLIST/NEUTRAL) — the `manual_score` field has no effect on the pipeline.
+**What's missing**:
+1. Auto-fetch fundamentals from CoinGecko/CoinMarketCap API (market cap, supply, volume trends).
+2. Auto-scoring engine to calculate a fundamental score from fetched data.
+3. Auto-classify coins: high score → WHITELIST, low score → BLACKLIST.
+4. Make `manual_score` (or auto-score) influence HeadHunter filtering or Judge confidence.
+5. Correlate fundamental scores with actual P&L performance (once P&L display is built).
+
+---
+
 ## Documentation
 
 - `docs/FUNCTIONAL_DOCUMENT.md` — Full function-level documentation of every module and calculation

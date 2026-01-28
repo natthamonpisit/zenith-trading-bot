@@ -61,6 +61,8 @@ elif st.session_state.page == 'Wallet':
     render_wallet_page(db)
 elif st.session_state.page == 'Strategy Config':
     render_config_page(db)
+elif st.session_state.page == 'Fundamental Lab':
+    render_fundamental_page(db)
 elif st.session_state.page == 'Trade History':
     render_history_page(db)
 elif st.session_state.page == 'Simulation Mode':

@@ -87,6 +87,31 @@ def render_dashboard_page(db):
             except Exception as e:
                 st.caption(f"Market data unavailable: {e}")
 
+        # P&L Summary Card
+        with st.container(border=True):
+            st.markdown("##### 📈 Realized P&L")
+            try:
+                is_sim = (current_mode == "PAPER")
+                closed = db.table("positions").select("pnl").eq("is_sim", is_sim).eq("is_open", False).execute()
+
+                if closed.data:
+                    pnl_values = [float(p['pnl']) for p in closed.data if p.get('pnl') is not None]
+                    if pnl_values:
+                        total_pnl = sum(pnl_values)
+                        wins = len([p for p in pnl_values if p > 0])
+                        total_trades = len(pnl_values)
+                        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+
+                        pnl_color = "#00FF94" if total_pnl >= 0 else "#FF4B4B"
+                        st.markdown(f"<h3 style='color:{pnl_color}; margin:0;'>${total_pnl:,.2f}</h3>", unsafe_allow_html=True)
+                        st.caption(f"Win Rate: {win_rate:.1f}% ({wins}/{total_trades})")
+                    else:
+                        st.caption("No closed trades yet")
+                else:
+                    st.caption("No closed trades yet")
+            except Exception as e:
+                st.caption(f"P&L unavailable: {e}")
+
     with main_col:
         with st.container(border=True):
              st.markdown("#### 📈 Active Market Chart")

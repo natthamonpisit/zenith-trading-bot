@@ -80,6 +80,19 @@ def render_config_page(db):
                 min_prof = 1.0
             new_min_prof = st.number_input("Min Profit to Activate (%)", 0.0, 50.0, min_prof, step=0.5, help="Trailing stop only activates after this profit %.")
 
+        # ATR-based trailing stop settings
+        st.markdown("##### ATR-Based Mode")
+        atr1, atr2 = st.columns(2)
+        with atr1:
+            use_atr = str(get_cfg(db, "TRAILING_STOP_USE_ATR", "false")).replace('"', '').lower() == 'true'
+            new_use_atr = st.checkbox("Use ATR-Based Trailing Stop", value=use_atr, help="Use ATR (volatility) instead of fixed % for trailing stop distance. More adaptive to market conditions.")
+        with atr2:
+            try:
+                atr_mult = float(str(get_cfg(db, "TRAILING_STOP_ATR_MULTIPLIER", 2.0)))
+            except:
+                atr_mult = 2.0
+            new_atr_mult = st.number_input("ATR Multiplier", 1.0, 5.0, atr_mult, step=0.5, help="Trail distance = ATR × Multiplier. Higher = wider stop, lower = tighter stop.", disabled=not new_use_atr)
+
         # --- 3. Head Hunter (Fundamental) Config ---
         st.subheader("🕵️ Head Hunter Settings")
         
@@ -129,7 +142,9 @@ def render_config_page(db):
                     {"key": "ENABLE_MACD_MOMENTUM", "value": str(new_macd).lower()},
                     {"key": "TRAILING_STOP_ENABLED", "value": str(new_trail_enabled).lower()},
                     {"key": "TRAILING_STOP_PCT", "value": str(new_trail_pct)},
-                    {"key": "MIN_PROFIT_TO_TRAIL_PCT", "value": str(new_min_prof)}
+                    {"key": "MIN_PROFIT_TO_TRAIL_PCT", "value": str(new_min_prof)},
+                    {"key": "TRAILING_STOP_USE_ATR", "value": str(new_use_atr).lower()},
+                    {"key": "TRAILING_STOP_ATR_MULTIPLIER", "value": str(new_atr_mult)}
                 ]
                 for cfg in configs:
                     db.table("bot_config").upsert(cfg).execute()
