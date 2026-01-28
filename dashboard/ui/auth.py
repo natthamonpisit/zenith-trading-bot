@@ -46,6 +46,11 @@ def check_password() -> bool:
     
     def password_entered():
         """Callback when password is submitted"""
+        # Safety check: ensure password key exists
+        if "password" not in st.session_state:
+            st.session_state["password_correct"] = False
+            return
+            
         # Get configured password
         admin_password = get_admin_password()
         
