@@ -11,14 +11,29 @@ def render_wallet_page(db):
     st.title("💰 Live Readiness Check")
     st.markdown("---")
     
-    # Get API credentials
-    api_key = os.environ.get("BINANCE_API_KEY")
-    secret = os.environ.get("BINANCE_SECRET")
-    api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
+    # Get API credentials (Streamlit Cloud Secrets or Environment Variables)
+    try:
+        # Try Streamlit secrets first (for Streamlit Cloud)
+        api_key = st.secrets["binance"]["api_key"]
+        secret = st.secrets["binance"]["secret"]
+        api_url = st.secrets["binance"].get("api_url", "https://api.binance.com")
+    except (KeyError, FileNotFoundError):
+        # Fallback to environment variables (for local/Railway)
+        api_key = os.environ.get("BINANCE_API_KEY")
+        secret = os.environ.get("BINANCE_SECRET")
+        api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
     
     if not api_key or not secret:
-        st.error("⚠️ Binance API credentials not found in environment variables!")
-        st.info("💡 Set `BINANCE_API_KEY` and `BINANCE_SECRET` in `.env` file")
+        st.warning("⚠️ Binance API credentials not configured")
+        st.info("💡 **Streamlit Cloud:** Add credentials in App Settings > Secrets\\n\\n**Local:** Set in `.env` file")
+        st.markdown("""
+        ```toml
+        [binance]
+        api_key = "your_api_key"
+        secret = "your_secret"
+        api_url = "https://api.binance.com"
+        ```
+        """)
         return
     
     # Initialize exchange
