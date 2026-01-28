@@ -44,6 +44,11 @@ def check_password() -> bool:
             st.stop()  # Stop execution if not authenticated
     """
     
+    # IMPORTANT: Check authentication FIRST before showing login form
+    # This ensures authenticated users don't see login screen on rerun
+    if st.session_state.get("password_correct") == True:
+        return True
+    
     def password_entered():
         """Callback when password is submitted"""
         # Safety check: ensure password key exists
@@ -65,21 +70,8 @@ def check_password() -> bool:
         else:
             st.session_state["password_correct"] = False
 
-    # First run: show login form
-    if "password_correct" not in st.session_state:
-        st.markdown("### 🔐 Zenith Trading Bot - Login")
-        st.text_input(
-            "Password", 
-            type="password", 
-            on_change=password_entered,
-            key="password",
-            help="Enter your dashboard password"
-        )
-        st.info("💡 **Streamlit Cloud:** Set secrets in App Settings | **Local:** Set in `.streamlit/secrets.toml`")
-        return False
-    
     # Password incorrect: show error + retry
-    elif not st.session_state["password_correct"]:
+    if st.session_state.get("password_correct") == False:
         st.markdown("### 🔐 Zenith Trading Bot - Login")
         st.text_input(
             "Password", 
@@ -90,9 +82,18 @@ def check_password() -> bool:
         st.error("😕 Incorrect password. Please try again.")
         return False
     
-    # Password correct: authenticated
+    # First run: show login form
     else:
-        return True
+        st.markdown("### 🔐 Zenith Trading Bot - Login")
+        st.text_input(
+            "Password", 
+            type="password", 
+            on_change=password_entered,
+            key="password",
+            help="Enter your dashboard password"
+        )
+        st.info("💡 **Streamlit Cloud:** Set secrets in App Settings | **Local:** Set in `.streamlit/secrets.toml`")
+        return False
 
 
 def logout():
