@@ -104,7 +104,18 @@ def render_wallet_page(db):
         
         # Format DataFrame for display
         display_df = df[['asset', 'free', 'locked', 'total']].copy()
-        display_df.columns = ['Asset', 'Available', 'Locked', 'Total']
+        
+        # Add USD value if available
+        if 'usd_value' in df.columns:
+            display_df['usdt_value'] = df['usd_value']
+            display_df.columns = ['Asset', 'Available', 'Locked', 'Total', 'USDT Value']
+            
+            # Format USDT Value as currency
+            display_df['USDT Value'] = display_df['USDT Value'].apply(
+                lambda x: f"${float(x):,.2f}" if pd.notna(x) else "$0.00"
+            )
+        else:
+            display_df.columns = ['Asset', 'Available', 'Locked', 'Total']
         
         # Format numbers
         for col in ['Available', 'Locked', 'Total']:
