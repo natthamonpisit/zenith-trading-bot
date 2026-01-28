@@ -15,6 +15,9 @@ class Strategist:
     Uses Google Gemini to analyze technical indicators and news sentiment.
     """
     def __init__(self):
+        # Initialize database first (needed for saving model info)
+        self.db = get_db()
+        
         # Ensure API Key is loaded
         gemini_key = os.environ.get("GEMINI_API_KEY")
         if not gemini_key:
@@ -22,9 +25,8 @@ class Strategist:
         
         genai.configure(api_key=gemini_key)
         
-        # Dynamic model selection with fallback
+        # Dynamic model selection with fallback (after db init)
         self.model = self._select_best_model()
-        self.db = get_db()
         
         # Circuit breaker for Gemini AI protection
         self.gemini_breaker = CircuitBreaker(
