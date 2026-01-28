@@ -22,6 +22,7 @@ from dashboard.ui.status_page import render_status_page
 from dashboard.ui.analysis_page import render_analysis_page
 from dashboard.ui.fundamental_page import render_fundamental_page
 from dashboard.ui.session_history_page import render_session_history_page
+from dashboard.ui.capital_page import render_capital_page
 
 # --- CONFIG ---
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
@@ -60,6 +61,8 @@ if st.session_state.page == 'Dashboard':
     render_dashboard_page(db)
 elif st.session_state.page == 'Wallet':
     render_wallet_page(db)
+elif st.session_state.page == 'Capital Management':
+    render_capital_page(db)
 elif st.session_state.page == 'Strategy Config':
     render_config_page(db)
 elif st.session_state.page == 'Fundamental Lab':

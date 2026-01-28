@@ -5,6 +5,7 @@ from datetime import datetime
 from src.database import get_db
 from src.roles.job_price import PriceSpy # Re-use Spy's connection logic if possible, or new instance
 from src.session_manager import get_active_session, update_session_stats
+from src.capital_manager import auto_transfer_profit
 
 # Lock to prevent concurrent simulation balance updates
 _sim_balance_lock = threading.Lock()
@@ -114,6 +115,15 @@ class SniperExecutor:
                             if session_id:
                                 update_session_stats(session_id, pnl)
 
+                            # Auto-transfer profit if enabled (only for winning trades)
+                            if pnl > 0:
+                                mode = 'PAPER' if is_sim else 'LIVE'
+                                transferred = auto_transfer_profit(mode=mode, profit_amount=pnl)
+                                if transferred > 0:
+                                    # Update simulation balance to reflect transfer
+                                    new_bal_after_transfer = current_bal + revenue - transferred
+                                    self.db.table("simulation_portfolio").update({"balance": new_bal_after_transfer}).eq("id", 1).execute()
+
                             fill_amount = qty
                             print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Revenue: ${revenue:,.2f} | PnL: ${pnl:,.2f}")
                         else:
@@ -206,6 +216,11 @@ class SniperExecutor:
                         session_id = pos.get('session_id')
                         if session_id:
                             update_session_stats(session_id, pnl)
+
+                        # Auto-transfer profit if enabled (only for winning trades)
+                        if pnl > 0:
+                            mode = 'LIVE'
+                            auto_transfer_profit(mode=mode, profit_amount=pnl)
 
                         print(f"Sniper (Live): Closed position. Exit: ${fill_price:,.2f} | PnL: ${pnl:,.2f}")
             

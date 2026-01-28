@@ -21,6 +21,9 @@ from src.session_manager import (
     take_balance_snapshot
 )
 
+# --- IMPORT CAPITAL MANAGER ---
+from src.capital_manager import get_available_trading_balance
+
 # Thread-safe heartbeat tracking
 _heartbeat_lock = threading.Lock()
 _last_heartbeat = time.time()
@@ -119,7 +122,7 @@ def process_pair(pair, timeframe):
         # 3. JUDGE (Rules)
         print("3. Judge Evaluate...")
 
-        # FETCH REAL BALANCE based on Mode
+        # FETCH REAL BALANCE based on Mode (with capital protection)
         try:
             mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
             mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
@@ -130,18 +133,21 @@ def process_pair(pair, timeframe):
         if mode == "PAPER":
             try:
                 sim_wallet = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
-                balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
+                actual_balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
             except Exception as e:
                 print(f"Sim wallet fetch error: {e}")
-                balance = 1000.0
+                actual_balance = 1000.0
         else:
             try:
                 # LIVE Mode: Fetch real USDT balance
                 bal_data = price_spy.get_account_balance()
-                balance = bal_data['total'].get('USDT', 0.0) if bal_data else 0.0
+                actual_balance = bal_data['total'].get('USDT', 0.0) if bal_data else 0.0
             except Exception as e:
                 print(f"Live balance fetch error: {e}")
-                balance = 0.0
+                actual_balance = 0.0
+
+        # Apply capital protection limits (bot only uses trading_capital, not full balance)
+        balance = get_available_trading_balance(mode=mode, actual_balance=actual_balance)
         
         # Convert AI output to needed format
         ai_data = {'confidence': analysis.get('confidence'), 'recommendation': analysis.get('recommendation')}
