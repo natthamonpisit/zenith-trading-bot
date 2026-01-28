@@ -146,20 +146,26 @@ def process_pair(pair, timeframe):
         }
         
         is_sim = (mode == "PAPER")
-        verdict = judge.evaluate(ai_data, tech_data, balance, is_sim=is_sim)
         ai_rec = analysis.get('recommendation', 'UNKNOWN')
+
+        # Skip non-actionable signals entirely (no DB write, no execution)
+        if ai_rec in ['WAIT', 'HOLD']:
+            print(f"   - AI Recommendation: {ai_rec} -- Skipping (non-actionable)")
+            return
+
+        verdict = judge.evaluate(ai_data, tech_data, balance, is_sim=is_sim, asset_id=asset_id)
         print(f"   - AI Recommendation: {ai_rec} (Confidence: {ai_data['confidence']}%)")
-        print(f"   - Judge Verdict: {verdict.decision} → {verdict.reason}")
-        
-        # Log Signal to DB
+        print(f"   - Judge Verdict: {verdict.decision} -> {verdict.reason}")
+
+        # Log Signal to DB (only BUY/SELL, not WAIT/HOLD)
         current_price = float(df['close'].iloc[-1])
         current_atr = float(df['atr'].iloc[-1]) if 'atr' in df.columns and not pd.isna(df['atr'].iloc[-1]) else 0.0
-        
+
         signal_data = {
             "asset_id": asset_id,
-            "signal_type": analysis.get('recommendation'), # BUY/SELL
-            "entry_target": current_price,  # Actual entry price target
-            "entry_atr": current_atr,  # Store ATR at signal creation
+            "signal_type": ai_rec,
+            "entry_target": current_price,
+            "entry_atr": current_atr,
             "status": "PENDING" if verdict.decision == "APPROVED" else "REJECTED",
             "judge_reason": verdict.reason,
             "is_sim": is_sim
@@ -398,10 +404,32 @@ def run_trading_cycle():
         # 2. Load Candidates
         candidates_str = active_list.data[0]['value'].replace("'", '"')
         candidates = json.loads(candidates_str)
-        
+
         if not candidates:
              run_farming_cycle()
              return
+
+        # 2b. Include symbols from open positions to prevent orphaned holdings
+        try:
+            mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
+            current_mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
+            is_sim_mode = (current_mode == "PAPER")
+            open_positions = db.table("positions").select("asset_id, assets(symbol)")\
+                .eq("is_open", True).eq("is_sim", is_sim_mode).execute()
+            if open_positions.data:
+                held_symbols = set()
+                for pos in open_positions.data:
+                    sym = pos.get('assets', {}).get('symbol') if pos.get('assets') else None
+                    if sym:
+                        held_symbols.add(sym)
+                # Add held symbols not already in candidates
+                candidate_set = set(candidates)
+                for sym in held_symbols:
+                    if sym not in candidate_set:
+                        candidates.append(sym)
+                        print(f"[SafeGuard] Added held position {sym} to candidates (not in farm list)")
+        except Exception as e:
+            print(f"Orphan position check error: {e}")
 
         # 3. Snipe (Process)
         # Load timeframe

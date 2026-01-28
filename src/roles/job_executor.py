@@ -92,16 +92,22 @@ class SniperExecutor:
                         if pos_res.data:
                             pos = pos_res.data[0]
                             qty = float(pos['quantity'])
+                            entry_price = float(pos['entry_avg'])
                             revenue = qty * fill_price
+                            pnl = revenue - (qty * entry_price)
 
                             new_bal = current_bal + revenue
                             self.db.table("simulation_portfolio").update({"balance": new_bal}).eq("id", 1).execute()
 
-                            # Close the existing position
-                            self.db.table("positions").update({"is_open": False}).eq("id", pos['id']).execute()
+                            # Close the existing position with exit data
+                            self.db.table("positions").update({
+                                "is_open": False,
+                                "exit_price": fill_price,
+                                "pnl": pnl
+                            }).eq("id", pos['id']).execute()
 
                             fill_amount = qty
-                            print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Revenue: ${revenue:,.2f}")
+                            print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Revenue: ${revenue:,.2f} | PnL: ${pnl:,.2f}")
                         else:
                             raise Exception(f"No open simulation position found for {symbol} to sell.")
                 
@@ -157,16 +163,23 @@ class SniperExecutor:
             else:
                 # SELL: Position already closed above (sim) or record close for live
                 if not is_sim:
-                    # For LIVE mode, close the existing open position
+                    # For LIVE mode, close the existing open position with exit data
                     pos_res = self.db.table("positions").select("*")\
                         .eq("asset_id", signal['asset_id'])\
                         .eq("is_open", True)\
                         .eq("is_sim", False)\
                         .order("created_at", desc=True).limit(1).execute()
                     if pos_res.data:
+                        pos = pos_res.data[0]
+                        entry_price = float(pos['entry_avg'])
+                        qty = float(pos['quantity'])
+                        pnl = (fill_price - entry_price) * qty
                         self.db.table("positions").update({
-                            "is_open": False
-                        }).eq("id", pos_res.data[0]['id']).execute()
+                            "is_open": False,
+                            "exit_price": fill_price,
+                            "pnl": pnl
+                        }).eq("id", pos['id']).execute()
+                        print(f"Sniper (Live): Closed position. Exit: ${fill_price:,.2f} | PnL: ${pnl:,.2f}")
             
             # 3. Update Signal Status
             self.db.table("trade_signals").update({"status": "EXECUTED", "is_sim": is_sim}).eq("id", signal['id']).execute()

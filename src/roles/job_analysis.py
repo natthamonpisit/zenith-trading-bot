@@ -233,14 +233,18 @@ class Judge:
             print(f"[Judge] Config load error: {e}")
             return {'RSI_THRESHOLD': 75, 'AI_CONF_THRESHOLD': 60}
 
-    def evaluate(self, ai_data, tech_data, portfolio_balance, is_sim=False):
+    def evaluate(self, ai_data, tech_data, portfolio_balance, is_sim=False, asset_id=None):
         """
         Core Logic:
         0. Check Max Open Positions Limit (per mode).
+        0b. Reject duplicate BUY for same asset.
         1. Check Hard Guardrails (RSI, Drawdown).
         2. Check AI Confidence.
         3. Calculate Position Size (Kelly or Fixed Risk).
         """
+
+        # Reload config from DB to pick up dashboard changes
+        self.reload_config()
 
         rsi = tech_data.get('rsi')
         ai_conf = ai_data.get('confidence')
@@ -269,7 +273,43 @@ class Judge:
                     )
             except Exception as e:
                 print(f"[Judge] Error checking positions: {e}")
-        
+
+        # --- 0b. DUPLICATE BUY CHECK (same asset) ---
+        if ai_rec == 'BUY' and asset_id:
+            try:
+                existing = self.db.table("positions")\
+                    .select("id")\
+                    .eq("asset_id", asset_id)\
+                    .eq("is_open", True)\
+                    .eq("is_sim", is_sim)\
+                    .execute()
+                if existing.data and len(existing.data) > 0:
+                    return TradeDecision(
+                        decision="REJECTED",
+                        size=0,
+                        reason=f"Duplicate: Already holding open position for this asset"
+                    )
+            except Exception as e:
+                print(f"[Judge] Error checking duplicate position: {e}")
+
+        # --- 0c. SELL WITHOUT POSITION CHECK ---
+        if ai_rec == 'SELL' and asset_id:
+            try:
+                has_position = self.db.table("positions")\
+                    .select("id")\
+                    .eq("asset_id", asset_id)\
+                    .eq("is_open", True)\
+                    .eq("is_sim", is_sim)\
+                    .execute()
+                if not has_position.data:
+                    return TradeDecision(
+                        decision="REJECTED",
+                        size=0,
+                        reason=f"No open position to sell"
+                    )
+            except Exception as e:
+                print(f"[Judge] Error checking sell position: {e}")
+
         # --- 1. THE HARD GUARDRAILS ---
         
         # A. RSI Veto (Always Active)
@@ -309,20 +349,29 @@ class Judge:
              )
 
         # --- 2. POSITION SIZING ---
+        # SELL uses existing position quantity (handled by Sniper), skip sizing
+        if ai_rec == 'SELL':
+            return TradeDecision(
+                decision="APPROVED",
+                size=0,
+                reason=f"SELL Approved (Conf: {ai_conf}%). Size determined by position."
+            )
+
+        # BUY: Calculate position size
         # Standardized Key: POSITION_SIZE_PCT
         # Default to 5% if not set
         pos_size_pct = float(self.config.get('POSITION_SIZE_PCT', 5.0)) / 100
         calculated_size = portfolio_balance * pos_size_pct
-        
+
         # Apply MAX_RISK_PER_TRADE limit
         max_risk_pct = float(self.config.get('MAX_RISK_PER_TRADE', 10.0)) / 100
         max_risk_amount = portfolio_balance * max_risk_pct
-        
+
         # Use the smaller of the two (more conservative)
-        size = min(calculated_size, max_risk_amount) 
-        
+        size = min(calculated_size, max_risk_amount)
+
         return TradeDecision(
             decision="APPROVED",
             size=size,
-            reason=f"AI Agreed (Conf: {ai_conf}%) + Tech Clean. Sizing: {size:.2f}"
+            reason=f"BUY Approved (Conf: {ai_conf}%) + Tech Clean. Sizing: {size:.2f}"
         )
