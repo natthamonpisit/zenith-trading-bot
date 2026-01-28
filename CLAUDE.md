@@ -101,7 +101,7 @@ Required: `SUPABASE_URL`, `SUPABASE_KEY`, `GEMINI_API_KEY`, `BINANCE_API_KEY`, `
 ## Planned Features / TODO
 
 ### 1. Trading Sessions & Comprehensive Performance Tracking
-**Status**: NOT IMPLEMENTED
+**Status**: ✅ IMPLEMENTED (2025-01-28)
 **Problem**: Cannot track performance from fresh start; no session-based win/loss tracking.
 
 **New Database Tables Required**:
@@ -178,7 +178,7 @@ ALTER TABLE positions ADD COLUMN session_id UUID REFERENCES trading_sessions(id)
 ---
 
 ### 2. Paper Mode Reset & Historical Tracking
-**Status**: NOT IMPLEMENTED
+**Status**: ✅ IMPLEMENTED (2025-01-28)
 **Problem**: No way to reset paper trading; no historical simulation runs preserved.
 
 **UI Requirements** (in config_page.py):
@@ -210,7 +210,7 @@ ALTER TABLE positions ADD COLUMN session_id UUID REFERENCES trading_sessions(id)
 ---
 
 ### 3. Capital Protection / Profit Transfer System
-**Status**: NOT IMPLEMENTED
+**Status**: ✅ IMPLEMENTED (2025-01-28)
 **Problem**: No way to protect profits; bot uses entire wallet balance.
 
 **Concept: Virtual Wallet Separation**
@@ -277,6 +277,91 @@ def after_trade_close(pnl):
 - Works for both PAPER and LIVE modes
 
 **Note**: This is VIRTUAL separation (database tracking only). No actual Binance sub-account transfers needed. Bot simply respects `trading_capital` limit.
+
+---
+
+### 4. Exit Reason Tracking & Analytics
+**Status**: NOT IMPLEMENTED
+**Problem**: No visibility into WHY positions were closed; can't analyze which exit strategies work best.
+
+**Value**: Enable users and AI to analyze exit effectiveness, optimize configurations, and identify patterns in trading behavior.
+
+**Database Changes**:
+```sql
+-- Add exit_reason column to positions table
+ALTER TABLE positions ADD COLUMN exit_reason TEXT;
+
+-- Create index for analysis queries
+CREATE INDEX idx_positions_exit_reason ON positions(exit_reason);
+```
+
+**Exit Reason Categories**:
+- `AI_SELL_SIGNAL` - Strategist AI recommended SELL
+- `TRAILING_STOP` - Trailing stop triggered (price dropped X% from peak)
+- `STOP_LOSS` - Hard stop loss hit (if implemented)
+- `TAKE_PROFIT` - Take profit target reached (if implemented)
+- `MANUAL_CLOSE` - User/dashboard manually closed position
+- `MAX_HOLD_TIME` - Position exceeded max hold duration (if implemented)
+- `EMERGENCY_CLOSE` - Bot emergency stop triggered
+- `SESSION_END` - Position closed when session ended/reset
+
+**Implementation Points**:
+1. **job_executor.py**: Add `exit_reason` parameter when closing positions
+   ```python
+   def close_position(pos_id, exit_price, pnl, exit_reason):
+       db.table("positions").update({
+           "is_open": False,
+           "exit_price": exit_price,
+           "pnl": pnl,
+           "exit_reason": exit_reason,
+           "closed_at": datetime.utcnow().isoformat()
+       }).eq("id", pos_id).execute()
+   ```
+
+2. **main.py**: Pass `"TRAILING_STOP"` when trailing stop triggers (line ~296)
+   ```python
+   success = sniper.execute_order(full_signal, exit_reason="TRAILING_STOP")
+   ```
+
+3. **Judge**: Could add stop-loss/take-profit logic and pass appropriate reasons
+
+4. **history_page.py**: Add `exit_reason` column to closed positions table
+   - Color-code by reason type (green for AI_SELL, orange for TRAILING_STOP, etc.)
+
+5. **session_history_page.py**: Show exit reason breakdown per session
+   - Bar chart: % of exits by type
+   - Win rate by exit reason
+
+6. **Strategist.generate_performance_report()**: Feed exit reason statistics to AI
+   ```python
+   exit_breakdown = {
+       'AI_SELL_SIGNAL': {'count': 10, 'avg_pnl': 50.25, 'win_rate': 80},
+       'TRAILING_STOP': {'count': 5, 'avg_pnl': 30.10, 'win_rate': 100}
+   }
+   ```
+
+**Analytics Insights**:
+- **Win rate by exit type**: Do AI SELLs outperform trailing stops?
+- **Average P&L by exit reason**: Which method captures most profit?
+- **Timing analysis**: Are trailing stops exiting too early/late?
+- **Strategy optimization**: Adjust configs based on exit performance
+- **Pattern detection**: Do certain coins perform better with specific exit types?
+- **AI feedback loop**: Feed exit data back to Strategist for improved SELL timing
+
+**Dashboard Enhancements**:
+- Add filter in Trade History: "Show only Trailing Stop exits"
+- Add metric card: "Most Profitable Exit Method"
+- Add chart: "Exit Method Distribution" (pie chart)
+- Add comparison table: Win rate vs Avg P&L by exit reason
+
+**Example AI Analysis Output**:
+```
+Exit Strategy Performance:
+- AI SELL Signals: 75% win rate, $45 avg profit
+- Trailing Stops: 100% win rate, $28 avg profit
+- Recommendation: Trailing stops preserve capital but exit early.
+  Consider tightening AI SELL criteria or widening trailing stop %.
+```
 
 ---
 
