@@ -5,7 +5,6 @@ echo "🚀 Starting Zenith OS..."
 echo "🤖 Launching Trading Bot (main.py)..."
 python main.py &
 
-# 2. Start the Dashboard (UI) in Foreground
-# Streamlit needs to bind to $PORT for Railway to detect health
-echo "📊 Launching Dashboard on Port $PORT..."
-streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
+# 2. Start the Status Server (Web UI) in Foreground
+echo "📊 Launching Status Server on Port $PORT..."
+python status_server.py
