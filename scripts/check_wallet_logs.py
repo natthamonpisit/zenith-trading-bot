@@ -1,5 +1,5 @@
 """
-Check system logs for wallet sync errors
+Fetch recent logs for WalletSync role from Supabase
 """
 import sys
 import os
@@ -8,39 +8,30 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.database import get_db
 
 def check_wallet_logs():
-    """Check system logs for wallet sync messages"""
-    
     db = get_db()
     
     print("=" * 60)
-    print("🔍 Checking WalletSync logs...")
+    print("🔍 WalletSync Recent Logs (Last 20)")
     print("=" * 60)
     
     try:
-        # Get recent wallet sync logs
+        # Fetch logs for WalletSync role
         result = db.table("system_logs")\
-            .select("*")\
+            .select("created_at, message, level")\
             .eq("role", "WalletSync")\
             .order("created_at", desc=True)\
-            .limit(10)\
+            .limit(20)\
             .execute()
         
-        if result.data:
-            print(f"\n📋 Found {len(result.data)} WalletSync logs:\n")
-            for log in result.data:
-                level = log.get('level', 'INFO')
-                msg = log.get('message', '')
-                created = log.get('created_at', '')
-                
-                emoji = "✅" if level == "SUCCESS" else "⚠️" if level == "WARNING" else "❌" if level == "ERROR" else "ℹ️"
-                print(f"{emoji} [{level}] {msg}")
-                print(f"   Time: {created}\n")
-        else:
-            print("\n❌ No WalletSync logs found")
-            print("💡 This means wallet sync hasn't run yet or failed silently")
+        if not result.data:
+            print("❌ No logs found for WalletSync role")
         
+        for log in result.data:
+            emoji = "🔴" if log['level'] == "ERROR" else "🟢" if log['level'] == "SUCCESS" else "ℹ️"
+            print(f"{log['created_at']} {emoji} [{log['level']}] {log['message']}")
+            
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"❌ Error fetching logs: {e}")
 
 if __name__ == "__main__":
     check_wallet_logs()

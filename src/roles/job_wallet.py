@@ -52,12 +52,30 @@ class WalletSync:
         try:
             print("🔄 Fetching wallet balance from Binance...")
             
-            # Fetch balance from Binance (Strictly SPOT type)
-            balance = self.exchange.fetch_balance({'type': 'spot'})
-            
+            # Fetch balance from Binance
+            # HACK: Bypass CCXT fetch_balance internal logic which might probe Margin API
+            # Use raw privateGetAccount for Binance TH to be safe
+            raw_balance = None
+            if 'binance.th' in self.exchange.urls['api'].get('public', ''):
+                print("Address: Binance TH - Using raw privateGetAccount...")
+                response = self.exchange.privateGetAccount()
+                # Parse raw response
+                raw_balance = {'total': {}, 'free': {}, 'used': {}}
+                for bal in response['balances']:
+                    asset = bal['asset']
+                    free = float(bal['free'])
+                    locked = float(bal['locked'])
+                    if free > 0 or locked > 0:
+                        raw_balance['free'][asset] = free
+                        raw_balance['used'][asset] = locked
+                        raw_balance['total'][asset] = free + locked
+            else:
+                # Standard Global Binance
+                raw_balance = self.exchange.fetch_balance({'type': 'spot'})
+
             # Prepare asset list (only non-zero balances)
             assets = []
-            for asset, amount in balance['total'].items():
+            for asset, amount in raw_balance['total'].items():
                 if amount > 0:  # Only active balances
                     # Calculate USD value
                     usd_value = 0.0
@@ -65,16 +83,17 @@ class WalletSync:
                         usd_value = amount
                     else:
                         try:
+                            # Use safe ticker fetch
                             ticker = self.exchange.fetch_ticker(f"{asset}/USDT")
                             usd_value = amount * ticker['last']
                         except Exception as e:
-                            print(f"⚠️ Could not fetch price for {asset}: {e}")
+                            # Silent fail for price fetch
                             usd_value = 0.0
                     
                     assets.append({
                         "asset": asset,
-                        "free": float(balance['free'].get(asset, 0)),
-                        "locked": float(balance['used'].get(asset, 0)),
+                        "free": float(raw_balance['free'].get(asset, 0)),
+                        "locked": float(raw_balance['used'].get(asset, 0)),
                         "total": float(amount),
                         "usd_value": float(usd_value),
                         "is_active": True
