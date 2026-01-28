@@ -58,8 +58,18 @@ class PriceSpy:
              self.exchange = ccxt.binance({
                 'apiKey': self.api_key,
                 'secret': self.secret,
-                'timeout': 10000, # Correct location
-                'options': options,
+                'timeout': 10000, 
+                'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot',
+                    'fetchCurrencies': False,
+                    'fetchMarginPairs': False,
+                    'fetchPositions': False,
+                    'warnOnFetchMarginPairs': False,
+                    'adjustForTimeDifference': True,
+                    'recvWindow': 10000,
+                    'createMarketBuyOrderRequiresPrice': False, # Binance spot market buy doesn't need price
+                }
              })
              # Override URLs map manually to point to TH
              # TEST RESULT: api/v3 is 404. api/v1 is 200. We MUST alias v3 -> v1.
