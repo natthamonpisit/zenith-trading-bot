@@ -29,7 +29,7 @@ db = get_db()
 # --- SESSION STATE ---
 if 'page' not in st.session_state: st.session_state.page = 'Dashboard'
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = True  # Keep enabled for real-time updates
-if 'password_correct' not in st.session_state: st.session_state.password_correct = False  # Initialize auth state
+# NOTE: password_correct is managed by auth.py - DO NOT initialize here!
 
 # --- AUTHENTICATION ---
 from dashboard.ui.auth import check_password, show_logout_button
