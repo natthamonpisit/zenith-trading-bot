@@ -140,9 +140,19 @@ class SniperExecutor:
                 else:
                     raise Exception(f"Invalid Signal Type: {side}")
 
-                fill_price = order.get('price') or order.get('average', 0)
-                fill_amount = order.get('amount', amount)
-                print(f"Sniper: Order Placed! ID: {order['id']}")
+                # Extract fill price from order response (Binance market orders may return price=None)
+                fill_price = order.get('average') or order.get('price') or 0
+                if not fill_price or float(fill_price) == 0:
+                    # Fallback: fetch current market price if order response missing price
+                    try:
+                        fallback_ticker = self.exchange.fetch_ticker(symbol)
+                        fill_price = fallback_ticker['last']
+                        print(f"Sniper: Order price missing from response, using market price: ${fill_price:,.2f}")
+                    except Exception:
+                        raise Exception(f"Cannot determine fill price for {symbol} - order response and ticker both failed")
+                fill_price = float(fill_price)
+                fill_amount = float(order.get('amount', amount))
+                print(f"Sniper: Order Placed! ID: {order['id']} @ ${fill_price:,.2f}")
             
             # 2. Record Position / History in DB
             if side.upper() == 'BUY':
@@ -163,13 +173,9 @@ class SniperExecutor:
             else:
                 # SELL: Position already closed above (sim) or record close for live
                 if not is_sim:
-                    # For LIVE mode, close the existing open position with exit data
-                    pos_res = self.db.table("positions").select("*")\
-                        .eq("asset_id", signal['asset_id'])\
-                        .eq("is_open", True)\
-                        .eq("is_sim", False)\
-                        .order("created_at", desc=True).limit(1).execute()
-                    if pos_res.data:
+                    # For LIVE mode, close the position that was looked up earlier for the sell order
+                    # (pos_res was already fetched at line 126-130 before placing the order)
+                    if pos_res and pos_res.data:
                         pos = pos_res.data[0]
                         entry_price = float(pos['entry_avg'])
                         qty = float(pos['quantity'])

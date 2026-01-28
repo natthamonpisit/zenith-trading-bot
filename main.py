@@ -9,7 +9,6 @@ from src.database import get_db
 # --- IMPORT NEW ROLES ---
 from src.roles.job_screener import HeadHunter
 from src.roles.job_price import PriceSpy
-from src.roles.job_news import NewsSpy
 from src.roles.job_scout import Radar
 from src.roles.job_analysis import Strategist, Judge
 from src.roles.job_executor import SniperExecutor
@@ -32,7 +31,6 @@ def set_heartbeat():
 db = get_db()
 head_hunter = HeadHunter(db) # Pass DB for Config/Fundamental Data
 price_spy = PriceSpy()
-news_spy = NewsSpy()
 radar = Radar(price_spy) # Radar uses PriceSpy
 
 # Initialize Strategist early to select AI model
@@ -83,7 +81,10 @@ def process_pair(pair, timeframe):
             return
             
         df = price_spy.calculate_indicators(df)
-        
+        if df is None or df.empty:
+            print(f"❌ Indicator Calculation Failed for {pair}")
+            return
+
         # 2. STRATEGIST (AI)
         print("2. Strategist Analyzing...")
         

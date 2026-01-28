@@ -241,11 +241,6 @@ class PriceSpy:
         try:
             if not self.exchange.markets:
                 self.load_markets_custom()
-
-            # DYNAMIC MARKET SCANNING (User Request)
-            # Fetch all available symbols from exchange directly
-            if not self.exchange.markets:
-                self.exchange.load_markets()
             
             all_symbols = [s for s in self.exchange.symbols if '/USDT' in s]
             

@@ -105,19 +105,26 @@ class StatusHandler(BaseHTTPRequestHandler):
         # Supabase (already connected if we got here)
         apis['Supabase'] = {'status': '✅ Connected', 'healthy': True}
         
-        # Binance
+        # Binance - actually test connectivity
         try:
-            import ccxt
-            api_key = os.environ.get("BINANCE_API_KEY")
+            import requests as req
             api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
-            
+            api_key = os.environ.get("BINANCE_API_KEY")
             if api_key:
-                apis['Binance'] = {'status': f'✅ Configured ({api_url})', 'healthy': True}
+                try:
+                    ping_url = f"{api_url}/api/v1/ping"
+                    resp = req.get(ping_url, timeout=5)
+                    if resp.status_code == 200:
+                        apis['Binance'] = {'status': f'✅ Connected ({api_url})', 'healthy': True}
+                    else:
+                        apis['Binance'] = {'status': f'⚠️ Reachable but returned {resp.status_code}', 'healthy': False}
+                except Exception:
+                    apis['Binance'] = {'status': f'❌ Unreachable ({api_url})', 'healthy': False}
             else:
                 apis['Binance'] = {'status': '⚠️ Not Configured', 'healthy': False}
         except:
             apis['Binance'] = {'status': '❌ Error', 'healthy': False}
-        
+
         # Gemini AI + Show current model
         try:
             gemini_key = os.environ.get("GEMINI_API_KEY")

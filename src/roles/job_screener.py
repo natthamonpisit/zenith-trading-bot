@@ -42,7 +42,8 @@ class HeadHunter:
              print(f"   [HeadHunter] DB Error: {e}") 
         
         qualified = []
-        
+        rejected_log_count = 0
+
         print(f"🕵️ Head Hunter: Screening {len(candidates)} candidates...")
         print(f"   (Mode: {self.universe}, Min Vol: ${self.min_volume:,.0f})")
 
@@ -63,9 +64,10 @@ class HeadHunter:
                 
             # B. Volume Check
             if vol < self.min_volume:
-                # Log rejection for debugging (limited to first 5 per cycle to avoid spam)
-                if len(qualified) < 5: 
-                     print(f"HeadHunter: Rejected {symbol} (Vol ${vol:,.0f} < ${self.min_volume:,.0f})")
+                # Log first 5 rejections to avoid spam
+                rejected_log_count += 1
+                if rejected_log_count <= 5:
+                    print(f"HeadHunter: Rejected {symbol} (Vol ${vol:,.0f} < ${self.min_volume:,.0f})")
                 continue
 
             # C. Universe Check
