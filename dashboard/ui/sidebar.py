@@ -44,7 +44,7 @@ def render_sidebar(db):
         for p in pages:
             if st.button(f"{'🔷' if st.session_state.page == p else '🔹'} {p}", key=f"nav_{p}", use_container_width=True):
                 st.session_state.page = p
-                st.rerun()
+                # No st.rerun() needed - Streamlit will re-render automatically
                 
         st.markdown("---")
         
@@ -57,12 +57,12 @@ def render_sidebar(db):
             if current_status == "ACTIVE":
                 if st.button("🔴 STOP TRADING", type="primary", use_container_width=True):
                     db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
-                    st.rerun()
+                    st.success("✅ Stop command sent")
             else:
                 st.error("⛔ SYSTEM HALTED")
                 if st.button("🟢 RESUME TRADING", use_container_width=True):
                     db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "ACTIVE"}).execute()
-                    st.rerun()
+                    st.success("✅ Resume command sent")
                     
         with c2:
             # Dangerous Button: Restart Server
