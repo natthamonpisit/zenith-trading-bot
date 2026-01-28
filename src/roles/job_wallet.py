@@ -52,8 +52,8 @@ class WalletSync:
         try:
             print("🔄 Fetching wallet balance from Binance...")
             
-            # Fetch balance from Binance
-            balance = self.exchange.fetch_balance()
+            # Fetch balance from Binance (Strictly SPOT type)
+            balance = self.exchange.fetch_balance({'type': 'spot'})
             
             # Prepare asset list (only non-zero balances)
             assets = []
