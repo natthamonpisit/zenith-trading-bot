@@ -639,6 +639,21 @@ def start():
         except Exception as e:
             log_activity("WalletSync", f"Initial sync failed: {e}", "ERROR")
 
+        # 2. Ensure Active Session Exists (Auto-Start after Reset)
+        try:
+            current_mode = "LIVE" if mode == "LIVE" else "PAPER"
+            from src.session_manager import get_active_session, create_session
+            
+            active_session = get_active_session(mode=current_mode)
+            if not active_session:
+                print(f"🆕 No active {current_mode} session found. Creating initial session...")
+                new_session_id = create_session(mode=current_mode, start_balance=1000.0) # Default 1000
+                log_activity("System", f"Auto-created initial {current_mode} session", "INFO")
+            else:
+                print(f"✅ Resume Active Session: {active_session['session_name']}")
+        except Exception as e:
+            print(f"⚠️ Session Auto-Start Failed: {e}")
+
         # 1b. Initialize Trading Sessions
         print("📊 Initializing Trading Sessions...")
         try:
