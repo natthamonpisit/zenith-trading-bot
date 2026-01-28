@@ -77,17 +77,41 @@ class WalletSync:
             assets = []
             for asset, amount in raw_balance['total'].items():
                 if amount > 0:  # Only active balances
+            # Prepare asset list (only non-zero balances)
+            assets = []
+            for asset, amount in raw_balance['total'].items():
+                if amount > 0:  # Only active balances
                     # Calculate USD value
                     usd_value = 0.0
+                    symbol = f"{asset}/USDT"
+                    
                     if asset == 'USDT':
                         usd_value = amount
                     else:
                         try:
-                            # Use safe ticker fetch
-                            ticker = self.exchange.fetch_ticker(f"{asset}/USDT")
-                            usd_value = amount * ticker['last']
+                            # Robust Price Fetching
+                            price = 0.0
+                            
+                            if 'binance.th' in self.exchange.urls['api'].get('public', ''):
+                                # Manual fetch for Binance TH
+                                try:
+                                    # Use direct public API call
+                                    ticker_res = self.exchange.publicGetTicker24hr({'symbol': symbol.replace('/', '')})
+                                    price = float(ticker_res['lastPrice'])
+                                except:
+                                    # Fallback to simple ticker
+                                    ticker_res = self.exchange.publicGetTickerPrice({'symbol': symbol.replace('/', '')})
+                                    price = float(ticker_res['price'])
+                            else:
+                                # Standard CCXT
+                                ticker = self.exchange.fetch_ticker(symbol)
+                                price = ticker['last']
+                            
+                            usd_value = amount * price
+                            
                         except Exception as e:
-                            # Silent fail for price fetch
+                            # Silent fail for price fetch logic, but log critical ones
+                            # print(f"Warning: Price fetch failed for {symbol}: {e}")
                             usd_value = 0.0
                     
                     assets.append({
