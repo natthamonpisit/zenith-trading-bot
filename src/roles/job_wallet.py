@@ -6,8 +6,6 @@ and store it in Supabase, allowing Streamlit dashboard to display
 wallet data without direct Binance API access.
 """
 
-from src.utils.logger import log
-
 
 class WalletSync:
     """
@@ -28,7 +26,15 @@ class WalletSync:
         """
         self.db = db
         self.exchange = exchange
-        log("💰 WalletSync initialized", role="WalletSync")
+        print("💰 WalletSync initialized")
+        try:
+            self.db.table("system_logs").insert({
+                "role": "WalletSync",
+                "message": "💰 WalletSync initialized",
+                "level": "INFO"
+            }).execute()
+        except:
+            pass
     
     def sync_wallet(self):
         """
@@ -44,7 +50,7 @@ class WalletSync:
             bool: True if sync successful, False otherwise
         """
         try:
-            log("🔄 Fetching wallet balance from Binance...", role="WalletSync")
+            print("🔄 Fetching wallet balance from Binance...")
             
             # Fetch balance from Binance
             balance = self.exchange.fetch_balance()
@@ -62,30 +68,43 @@ class WalletSync:
                     })
             
             if not assets:
-                log("⚠️ No active wallet balances found", role="WalletSync", level="WARNING")
+                print("⚠️ No active wallet balances found")
+                self.db.table("system_logs").insert({
+                    "role": "WalletSync",
+                    "message": "⚠️ No active wallet balances found",
+                    "level": "WARNING"
+                }).execute()
                 return False
             
             # Clear old data (delete all existing records)
             try:
                 self.db.table("wallet_balance").delete().neq("id", 0).execute()
             except Exception as e:
-                log(f"⚠️ Failed to clear old wallet data: {e}", role="WalletSync", level="WARNING")
+                print(f"⚠️ Failed to clear old wallet data: {e}")
             
             # Insert fresh data
             result = self.db.table("wallet_balance").insert(assets).execute()
             
             # Log success
             total_usdt = sum(a['total'] for a in assets if a['asset'] == 'USDT')
-            log(
-                f"✅ Wallet synced: {len(assets)} assets, ${total_usdt:,.2f} USDT", 
-                role="WalletSync", 
-                level="SUCCESS"
-            )
+            msg = f"✅ Wallet synced: {len(assets)} assets, ${total_usdt:,.2f} USDT"
+            print(msg)
+            self.db.table("system_logs").insert({
+                "role": "WalletSync",
+                "message": msg,
+                "level": "SUCCESS"
+            }).execute()
             
             return True
             
         except Exception as e:
-            log(f"❌ Wallet sync failed: {e}", role="WalletSync", level="ERROR")
+            msg = f"❌ Wallet sync failed: {e}"
+            print(msg)
+            self.db.table("system_logs").insert({
+                "role": "WalletSync",
+                "message": msg,
+                "level": "ERROR"
+            }).execute()
             return False
     
     def get_total_balance_usd(self):
@@ -117,5 +136,5 @@ class WalletSync:
             return float(total_usdt)
             
         except Exception as e:
-            log(f"❌ Failed to get total balance: {e}", role="WalletSync", level="ERROR")
+            print(f"❌ Failed to get total balance: {e}")
             return 0.0
