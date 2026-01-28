@@ -71,6 +71,33 @@ def render_closed_positions(db, is_sim):
             df['pnl_val'] = df['pnl'].apply(lambda x: float(x) if x else 0)
             df['pnl_display'] = df['pnl'].apply(lambda x: f"${float(x):,.2f}" if x else 'N/A')
 
+            # --- EXIT REASON FORMATTING ---
+            def format_reason(reason):
+                emoji_map = {
+                    'AI_SELL_SIGNAL': '🤖 AI Sell',
+                    'TRAILING_STOP': '📉 Trailing Stop',
+                    'MANUAL_CLOSE': '👤 Manual',
+                    'STOP_LOSS': '🛑 Stop Loss',
+                    'TAKE_PROFIT': '🎯 Take Profit',
+                    'EMERGENCY_CLOSE': '🚨 Emergency',
+                    'SESSION_END': '⏹️ Session End',
+                    'UNKNOWN': '❓ Unknown'
+                }
+                if not reason: return '❓ Unknown'
+                return emoji_map.get(str(reason), str(reason))
+
+            if 'exit_reason' in df.columns:
+                 df['exit_reason_fmt'] = df['exit_reason'].apply(format_reason)
+            else:
+                 df['exit_reason_fmt'] = '❓ Unknown'
+
+            # --- FILTER ---
+            all_reasons = ["All"] + sorted([str(r) for r in df['exit_reason'].dropna().unique()]) if 'exit_reason' in df.columns else ["All"]
+            reason_filter = st.selectbox("Filter by Exit Reason", all_reasons, key=f"filter_{mode}")
+
+            if reason_filter != "All":
+                 df = df[df['exit_reason'] == reason_filter]
+
             # Calculate return %
             def calc_return(row):
                 try:
@@ -92,13 +119,14 @@ def render_closed_positions(db, is_sim):
                     return ''
 
             st.dataframe(
-                df[['closed_time', 'symbol', 'qty', 'entry', 'exit', 'pnl_display', 'return_pct']].style.map(color_pnl, subset=['pnl_display']),
+                df[['closed_time', 'symbol', 'qty', 'entry', 'exit', 'exit_reason_fmt', 'pnl_display', 'return_pct']].style.map(color_pnl, subset=['pnl_display']),
                 column_config={
                     'closed_time': 'Closed At',
                     'symbol': 'Symbol',
                     'qty': 'Quantity',
                     'entry': 'Entry Price',
                     'exit': 'Exit Price',
+                    'exit_reason_fmt': 'Exit Reason',
                     'pnl_display': 'P&L (USDT)',
                     'return_pct': 'Return %'
                 },

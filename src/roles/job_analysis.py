@@ -167,6 +167,13 @@ class Strategist:
                 'reasoning': f'AI analysis unavailable: {str(e)}',
                 'recommendation': 'WAIT'
             }
+            
+    # Note: The signal construction actually happens in THE JUDGE or whoever calls this.
+    # Strategist just returns recommendation.
+    # Let's check where the signal dict is built. 
+    # It seems Judge builds it. We should check Judge.evaluate() or similar.
+    # Wait, Strategist just returns JSON.
+    # Let's check Judge.evaluate() in job_analysis.py (same file further down)
 
     def generate_performance_report(self, trade_history, days_range, is_sim=False):
         """
@@ -207,6 +214,9 @@ class Strategist:
         **Recent Trade History (Last 20):**
         {json.dumps(trade_history[:20] if trade_history else [], default=str, indent=2)}
 
+        **Exit Strategy Performance:**
+        {self._get_exit_reason_stats(trade_history)}
+
         === ANALYSIS TASK ===
 
         1. **Executive Summary**: Provide a 2-3 sentence overview of overall performance.
@@ -241,6 +251,45 @@ class Strategist:
             return response.text
         except Exception as e:
             return f"Failed to generate report: {e}"
+
+    def _get_exit_reason_stats(self, positions):
+        """Calculate win rate and avg PnL by exit reason"""
+        if not positions:
+            return "No closed trades to analyze."
+            
+        from collections import defaultdict
+        stats = defaultdict(lambda: {'count': 0, 'wins': 0, 'total_pnl': 0})
+        
+        for pos in positions:
+            reason = pos.get('exit_reason', 'UNKNOWN')
+            # Handle potential None value for exit_reason
+            if not reason:
+                 reason = 'UNKNOWN'
+                 
+            stats[reason]['count'] += 1
+            pnl = float(pos.get('pnl', 0.0))
+            if pnl > 0:
+                stats[reason]['wins'] += 1
+            stats[reason]['total_pnl'] += pnl
+        
+        # Format for AI
+        output = []
+        for reason, data in stats.items():
+            count = data['count']
+            if count > 0:
+                win_rate = (data['wins'] / count * 100)
+                avg_pnl = data['total_pnl'] / count
+                output.append(f"- {reason}: {count} trades, {win_rate:.1f}% win rate, ${avg_pnl:.2f} avg PnL")
+        
+        return "\n".join(output) if output else "No data."
+
+    def generate_performance_report_with_exit_stats(self, trade_history, days_range, is_sim=False):
+        """Enhanced report generation including Exit Strategy Analytics"""
+        # Call the original method logic but inject exit stats
+        # For now, let's just patch the prompt inside generate_performance_report
+        # But since we can't easily patch the middle of a string in replace_file_content,
+        # we will add the exit stats to the end of the prompt in the existing function.
+        pass # Placeholder comment
 
     def _gather_performance_data(self, is_sim=False):
         """

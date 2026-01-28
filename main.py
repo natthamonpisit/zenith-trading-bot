@@ -299,6 +299,7 @@ def check_trailing_stops():
                     "entry_target": current_price,
                     "status": "PENDING",
                     "judge_reason": f"Trailing Stop: price ${current_price:,.2f} < stop ${trail_price:,.2f} (peak ${highest:,.2f})",
+                    "exit_reason": "TRAILING_STOP",  # NEW: Track why we sold
                     "is_sim": is_sim
                 }
                 signal_entry = db.table("trade_signals").insert(signal_data).execute()

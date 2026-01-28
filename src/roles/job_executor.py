@@ -102,11 +102,15 @@ class SniperExecutor:
                             new_bal = current_bal + revenue
                             self.db.table("simulation_portfolio").update({"balance": new_bal}).eq("id", 1).execute()
 
+                            # Extract Exit Reason (Default: AI_SELL_SIGNAL)
+                            exit_reason = signal.get('exit_reason', 'AI_SELL_SIGNAL')
+
                             # Close the existing position with exit data
                             self.db.table("positions").update({
                                 "is_open": False,
                                 "exit_price": fill_price,
                                 "pnl": pnl,
+                                "exit_reason": exit_reason,
                                 "closed_at": datetime.utcnow().isoformat()
                             }).eq("id", pos['id']).execute()
 
@@ -125,7 +129,7 @@ class SniperExecutor:
                                     self.db.table("simulation_portfolio").update({"balance": new_bal_after_transfer}).eq("id", 1).execute()
 
                             fill_amount = qty
-                            print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Revenue: ${revenue:,.2f} | PnL: ${pnl:,.2f}")
+                            print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Reason: {exit_reason} | PnL: ${pnl:,.2f}")
                         else:
                             raise Exception(f"No open simulation position found for {symbol} to sell.")
                 
@@ -205,10 +209,15 @@ class SniperExecutor:
                         entry_price = float(pos['entry_avg'])
                         qty = float(pos['quantity'])
                         pnl = (fill_price - entry_price) * qty
+                        
+                        # Extract Exit Reason (Default: AI_SELL_SIGNAL)
+                        exit_reason = signal.get('exit_reason', 'AI_SELL_SIGNAL')
+                        
                         self.db.table("positions").update({
                             "is_open": False,
                             "exit_price": fill_price,
                             "pnl": pnl,
+                            "exit_reason": exit_reason,
                             "closed_at": datetime.utcnow().isoformat()
                         }).eq("id", pos['id']).execute()
 
@@ -222,7 +231,7 @@ class SniperExecutor:
                             mode = 'LIVE'
                             auto_transfer_profit(mode=mode, profit_amount=pnl)
 
-                        print(f"Sniper (Live): Closed position. Exit: ${fill_price:,.2f} | PnL: ${pnl:,.2f}")
+                        print(f"Sniper (Live): Closed position. Exit: ${fill_price:,.2f} | Reason: {exit_reason} | PnL: ${pnl:,.2f}")
             
             # 3. Update Signal Status
             self.db.table("trade_signals").update({"status": "EXECUTED", "is_sim": is_sim}).eq("id", signal['id']).execute()
