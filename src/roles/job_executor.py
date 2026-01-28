@@ -1,6 +1,7 @@
 import ccxt
 import os
 import threading
+from datetime import datetime
 from src.database import get_db
 from src.roles.job_price import PriceSpy # Re-use Spy's connection logic if possible, or new instance
 from src.session_manager import get_active_session, update_session_stats
@@ -105,7 +106,7 @@ class SniperExecutor:
                                 "is_open": False,
                                 "exit_price": fill_price,
                                 "pnl": pnl,
-                                "closed_at": "NOW()"
+                                "closed_at": datetime.utcnow().isoformat()
                             }).eq("id", pos['id']).execute()
 
                             # Update session stats
@@ -198,7 +199,7 @@ class SniperExecutor:
                             "is_open": False,
                             "exit_price": fill_price,
                             "pnl": pnl,
-                            "closed_at": "NOW()"
+                            "closed_at": datetime.utcnow().isoformat()
                         }).eq("id", pos['id']).execute()
 
                         # Update session stats
