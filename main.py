@@ -609,8 +609,13 @@ def start():
         # --- IMMEDIATE FEEDBACK FOR USER ---
         # Write "I am Alive" signal to DB immediately so Dashboard turns GREEN
         try:
-             db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": str(time.time())}).execute()
-             print("💓 Heartbeat Initialized in DB")
+             current_time_str = str(time.time())
+             db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": current_time_str}).execute()
+             
+             # Record Start Time (for Uptime tracking)
+             db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": current_time_str}).execute()
+             
+             print("💓 Heartbeat & Start Time Initialized in DB")
              
              # Set MODE based on config
              mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()

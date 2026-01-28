@@ -34,9 +34,10 @@ class StatusHandler(BaseHTTPRequestHandler):
             api_status = self._check_api_connections(db)
             recent_activity = self._get_recent_activity(db)
             pnl_summary = self._get_pnl_summary(db)
+            uptime = self._get_uptime(db)
 
             # Generate HTML
-            html = self._generate_html(bot_status, heartbeat, api_status, recent_activity, pnl_summary)
+            html = self._generate_html(bot_status, heartbeat, api_status, recent_activity, pnl_summary, uptime)
             
             # Send response
             self.send_response(200)
@@ -76,6 +77,40 @@ class StatusHandler(BaseHTTPRequestHandler):
             }
         except:
             return {'status': 'ERROR', 'mode': 'UNKNOWN', 'running': False}
+
+    def _get_uptime(self, db):
+        """Get bot uptime"""
+        try:
+            result = db.table("bot_config").select("value").eq("key", "BOT_START_TIME").execute()
+            if result.data:
+                start_ts = float(result.data[0]['value'])
+                diff = time.time() - start_ts
+                
+                # Convert to readable format
+                m, s = divmod(diff, 60)
+                h, m = divmod(m, 60)
+                d, h = divmod(h, 24)
+                
+                if d > 0:
+                    uptime_str = f"{int(d)}d {int(h)}h {int(m)}m"
+                elif h > 0:
+                    uptime_str = f"{int(h)}h {int(m)}m {int(s)}s"
+                else:
+                    uptime_str = f"{int(m)}m {int(s)}s"
+
+                # Calculate start time string (Thai time)
+                utc_time = datetime.fromtimestamp(start_ts, tz=pytz.UTC)
+                thailand_time = utc_time.astimezone(THAILAND_TZ)
+                start_str = thailand_time.strftime('%Y-%m-%d %H:%M:%S')
+
+                return {
+                    'duration': uptime_str,
+                    'start_time': start_str,
+                    'is_valid': True
+                }
+        except:
+            pass
+        return {'duration': 'N/A', 'start_time': 'Unknown', 'is_valid': False}
     
     def _get_heartbeat(self, db):
         """Get last heartbeat"""
@@ -193,7 +228,7 @@ class StatusHandler(BaseHTTPRequestHandler):
         except:
             return {'live': {'total_pnl': 0, 'win_rate': 0, 'trades': 0}, 'sim': {'total_pnl': 0, 'win_rate': 0, 'trades': 0}}
     
-    def _generate_html(self, bot_status, heartbeat, api_status, recent_activity, pnl_summary=None):
+    def _generate_html(self, bot_status, heartbeat, api_status, recent_activity, pnl_summary=None, uptime=None):
         """Generate status HTML"""
 
         # Status color
@@ -207,6 +242,20 @@ class StatusHandler(BaseHTTPRequestHandler):
         else:
             live_pnl_color = '#888'
             sim_pnl_color = '#888'
+        
+        # Uptime String
+        if uptime and uptime['is_valid']:
+            uptime_display = uptime['duration']
+            start_display = uptime['start_time']
+        else:
+            uptime_display = "N/A"
+            start_display = "Unknown"
+
+        # Dead time calculation (if unseen for > 2 mins)
+        dead_time_html = ""
+        if not heartbeat['healthy']:
+            dead_mins = int(heartbeat['ago_seconds'] / 60)
+            dead_time_html = f'<div class="metric"><div class="label" style="color: #ff0000;">⚠️ OFFLINE FOR</div><div class="value" style="color: #ff0000;">{dead_mins} mins</div></div>'
         
         # Recent activity HTML
         activity_html = ""
@@ -322,6 +371,13 @@ class StatusHandler(BaseHTTPRequestHandler):
                     <div class="label">Mode</div>
                     <div class="value">{bot_status['mode']}</div>
                 </div>
+                
+                <div class="metric">
+                    <div class="label">Active Duration</div>
+                    <div class="value" style="color: #00aaff;">{uptime_display}</div>
+                </div>
+
+                {dead_time_html}
                 
                 <div class="metric">
                     <div class="label">Last Heartbeat</div>
