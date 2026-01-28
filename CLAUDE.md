@@ -88,49 +88,195 @@ Core tables: `bot_config`, `assets`, `positions`, `trade_signals`, `simulation_p
 
 Required: `SUPABASE_URL`, `SUPABASE_KEY`, `GEMINI_API_KEY`, `BINANCE_API_KEY`, `BINANCE_SECRET`, `BINANCE_API_URL` (https://api.binance.th for TH). See `.env.example`.
 
+## Completed Features (2025-01-28)
+
+- **P&L Display**: Implemented in history_page, dashboard_page, wallet_page, status_server
+- **ATR Trailing Stop UI**: Added USE_ATR toggle and ATR_MULTIPLIER input to config_page
+- **Simulation Page Fixes**: Fixed PnL % calculation, cached ticker fetches, added closed trades table
+- **Fundamental Lab Enhancement**: CoinGecko auto-fetch, auto-scoring, auto-classification, P&L correlation
+- **AI Performance Report**: Enhanced `Strategist.generate_performance_report()` with structured data
+
+---
+
 ## Planned Features / TODO
 
-### P&L Display & Performance Analytics
-**Status**: Data is stored (`positions.exit_price`, `positions.pnl`) but not surfaced in UI.
-**Where to implement**:
-1. `dashboard/ui/history_page.py` — Primary: table of closed positions showing symbol, entry_avg, exit_price, quantity, pnl, return %. This is the main trade history view.
-2. `dashboard/ui/dashboard_page.py` — Summary card: total realized P&L, win rate, best/worst trade.
-3. `dashboard/ui/wallet_page.py` — Cumulative realized P&L alongside wallet balance.
-4. `status_server.py` — Simple line: total PnL + win rate for Railway quick-check.
-5. `Strategist.generate_performance_report()` — Feed closed positions with pnl data for AI performance review (function exists but lacks real data).
+### 1. Trading Sessions & Comprehensive Performance Tracking
+**Status**: NOT IMPLEMENTED
+**Problem**: Cannot track performance from fresh start; no session-based win/loss tracking.
 
-### AI Performance Analysis Report (Post-Core)
-**Status**: `Strategist.generate_performance_report()` exists but uses a generic prompt with no structured data. Build after all core functions are stable.
-**Data to feed AI**:
-1. Closed positions: entry_avg, exit_price, pnl, return %, hold duration, symbol.
-2. Trade signals: total count, approved/rejected ratio, rejection reasons breakdown.
-3. Judge guardrail stats: how often RSI veto, EMA veto, MACD veto, confidence reject, position limit triggered.
-4. Farming history: candidates per cycle, recurring symbols.
-5. Win rate by symbol and by time window.
-6. Config change impact: before/after comparison when settings change.
-7. Trailing stop vs AI SELL: which exit method captured more profit.
-**AI output should include**: P&L summary, best/worst coins, config recommendations, pattern observations, blacklist suggestions.
+**New Database Tables Required**:
 
-### Simulation Page Fixes (`dashboard/ui/simulation_page.py`)
-**Issues found**:
-1. Unrealized PnL % is hardcoded `(unrealized_pnl/1000)*100` — should divide by actual `balance`, not 1000.
-2. Fetches tickers twice per open position (line 23 in summary loop, line 43 in card loop). Should fetch once and reuse.
-3. History table shows signals but not exit_price or pnl from closed positions.
+```sql
+-- trading_sessions: Track each simulation/live trading "run"
+CREATE TABLE trading_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_name TEXT,                    -- "Paper Run #3" or "Live Week 1"
+    mode TEXT NOT NULL,                   -- 'PAPER' or 'LIVE'
+    start_balance NUMERIC NOT NULL,
+    current_balance NUMERIC NOT NULL,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    ended_at TIMESTAMPTZ,                 -- NULL if active
+    is_active BOOLEAN DEFAULT TRUE,
 
-### Missing ATR Trailing Stop UI in Config Page (`dashboard/ui/config_page.py`)
-**Status**: Config page has basic trailing stop settings (enable, trail %, min profit %) but is missing:
-1. `TRAILING_STOP_USE_ATR` — Toggle to switch between fixed % and ATR-based mode.
-2. `TRAILING_STOP_ATR_MULTIPLIER` — ATR multiplier input (default 2.0).
-These keys exist in bot_config and are used by `main.py:203-212` but have no dashboard UI.
+    -- Aggregate Performance (updated after each trade close)
+    total_trades INT DEFAULT 0,
+    winning_trades INT DEFAULT 0,
+    losing_trades INT DEFAULT 0,
+    gross_profit NUMERIC DEFAULT 0,       -- Sum of all wins
+    gross_loss NUMERIC DEFAULT 0,         -- Sum of all losses (positive number)
+    net_pnl NUMERIC DEFAULT 0,            -- gross_profit - gross_loss
 
-### Fundamental Lab Enhancement
-**Status**: Currently a manual CRUD page (`dashboard/ui/fundamental_page.py`) for the `fundamental_coins` table. HeadHunter only uses the `status` field (WHITELIST/BLACKLIST/NEUTRAL) — the `manual_score` field has no effect on the pipeline.
-**What's missing**:
-1. Auto-fetch fundamentals from CoinGecko/CoinMarketCap API (market cap, supply, volume trends).
-2. Auto-scoring engine to calculate a fundamental score from fetched data.
-3. Auto-classify coins: high score → WHITELIST, low score → BLACKLIST.
-4. Make `manual_score` (or auto-score) influence HeadHunter filtering or Judge confidence.
-5. Correlate fundamental scores with actual P&L performance (once P&L display is built).
+    -- Advanced Metrics
+    largest_win NUMERIC DEFAULT 0,
+    largest_loss NUMERIC DEFAULT 0,
+    avg_win NUMERIC DEFAULT 0,
+    avg_loss NUMERIC DEFAULT 0,
+    win_rate NUMERIC DEFAULT 0,
+    profit_factor NUMERIC DEFAULT 0,      -- gross_profit / gross_loss
+    max_drawdown NUMERIC DEFAULT 0,
+    max_drawdown_pct NUMERIC DEFAULT 0,
+
+    -- Config Snapshot (JSON of bot_config at session start)
+    config_snapshot JSONB,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- config_change_log: Track parameter changes during session
+CREATE TABLE config_change_log (
+    id BIGSERIAL PRIMARY KEY,
+    session_id UUID REFERENCES trading_sessions(id),
+    key TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    changed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- balance_snapshots: For drawdown calculation
+CREATE TABLE balance_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    session_id UUID REFERENCES trading_sessions(id),
+    balance NUMERIC NOT NULL,
+    equity NUMERIC NOT NULL,              -- balance + unrealized PnL
+    peak_equity NUMERIC NOT NULL,
+    drawdown NUMERIC DEFAULT 0,
+    drawdown_pct NUMERIC DEFAULT 0,
+    snapshot_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add session reference to positions
+ALTER TABLE positions ADD COLUMN session_id UUID REFERENCES trading_sessions(id);
+```
+
+**Implementation Points**:
+- After each trade closes, call `update_session_stats(session_id, trade_pnl)` to update aggregates
+- Calculate: `win_rate`, `profit_factor`, `avg_win`, `avg_loss` on each update
+- Take balance snapshots every trading cycle for drawdown tracking
+- Link each position to its session via `session_id`
+
+---
+
+### 2. Paper Mode Reset & Historical Tracking
+**Status**: NOT IMPLEMENTED
+**Problem**: No way to reset paper trading; no historical simulation runs preserved.
+
+**UI Requirements** (in config_page.py):
+```
+┌─────────────────────────────────────────────┐
+│ 🔄 Paper Trading Session                    │
+│                                             │
+│ Current: "Paper Run #2"                     │
+│ Started: 2025-01-20 | Balance: $1,234.56   │
+│                                             │
+│ [🆕 Start New Simulation]                   │
+│   Starting Balance: [____1000____]          │
+│   Session Name: [__Paper Run #3__]          │
+│                                             │
+│   [🔄 Reset & Start Fresh]                  │
+└─────────────────────────────────────────────┘
+```
+
+**Reset Flow**:
+1. End current session (`ended_at = NOW()`, `is_active = false`)
+2. Snapshot final stats to `trading_sessions` table
+3. Create NEW session with user-specified `start_balance`
+4. Snapshot current `bot_config` to `config_snapshot` JSONB
+5. Reset `simulation_portfolio.balance` to new start balance
+6. Keep all positions/signals (linked to old `session_id`)
+
+**New Page**: `session_history_page.py` — View all past simulation runs with their configs and results.
+
+---
+
+### 3. Capital Protection / Profit Transfer System
+**Status**: NOT IMPLEMENTED
+**Problem**: No way to protect profits; bot uses entire wallet balance.
+
+**Concept: Virtual Wallet Separation**
+```
+┌───────────────────────────────────────────────┐
+│         USER'S BINANCE ACCOUNT                │
+│                                               │
+│   ┌─────────────────┐  ┌─────────────────┐   │
+│   │  Profit Reserve │  │ Trading Capital │   │
+│   │  (Protected)    │  │ (Bot uses this) │   │
+│   │  $500.00        │  │ $1,000.00       │   │
+│   └─────────────────┘  └─────────────────┘   │
+│            ▲                    │             │
+│            │   Auto-transfer    │             │
+│            └────────────────────┘             │
+│         (50% of profits moved)               │
+└───────────────────────────────────────────────┘
+```
+
+**Database Table**:
+```sql
+CREATE TABLE capital_allocation (
+    id SERIAL PRIMARY KEY,
+    mode TEXT NOT NULL,                    -- 'PAPER' or 'LIVE'
+
+    -- User-defined limits
+    trading_capital NUMERIC NOT NULL,      -- Max amount bot can use
+    profit_reserve NUMERIC DEFAULT 0,      -- Accumulated profits (protected)
+
+    -- Auto-transfer settings
+    auto_transfer_enabled BOOLEAN DEFAULT FALSE,
+    transfer_threshold NUMERIC DEFAULT 100, -- Min profit to trigger transfer
+    transfer_percentage NUMERIC DEFAULT 50, -- % of profit to transfer
+
+    -- Tracking
+    total_deposited NUMERIC DEFAULT 0,
+    total_withdrawn NUMERIC DEFAULT 0,
+
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Bot Logic Changes**:
+```python
+def get_available_trading_balance():
+    """Bot only sees trading_capital, not profit_reserve"""
+    allocation = get_capital_allocation()
+    actual_balance = get_binance_usdt_balance()
+    return min(actual_balance, allocation.trading_capital)
+
+def after_trade_close(pnl):
+    if pnl > 0 and allocation.auto_transfer_enabled:
+        if pnl >= allocation.transfer_threshold:
+            transfer = pnl * (allocation.transfer_percentage / 100)
+            allocation.profit_reserve += transfer
+            allocation.trading_capital -= transfer  # Reduce available capital
+```
+
+**UI Requirements** (new `capital_page.py`):
+- Show Trading Capital vs Profit Reserve split
+- Enable/disable auto-transfer
+- Set threshold and percentage
+- Manual transfer buttons (Trading ↔ Reserve)
+- Works for both PAPER and LIVE modes
+
+**Note**: This is VIRTUAL separation (database tracking only). No actual Binance sub-account transfers needed. Bot simply respects `trading_capital` limit.
 
 ---
 
