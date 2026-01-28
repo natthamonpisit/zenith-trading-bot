@@ -202,7 +202,9 @@ def process_pair(pair, timeframe, intent="ENTRY"):
         # For SELL signals, attach default exit reason if Approved
         # (This is handled in executor by default, but we can be explicit here if we want)
         if ai_rec == "SELL":
-             signal_data['exit_reason'] = "AI_SELL_SIGNAL"
+             # Extract reasoning (limit length to fit DB text field comfortably)
+             reasoning_text = str(analysis.get('reasoning', '')).replace("'", "").replace('"', '')[:100]
+             signal_data['exit_reason'] = f"AI_SELL_SIGNAL: {reasoning_text}"
              
         signal_entry = db.table("trade_signals").insert(signal_data).execute()
         
@@ -217,7 +219,8 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             
             # Pass exit reason explicitly to executor if SELL
             if ai_rec == "SELL":
-                full_signal['exit_reason'] = "AI_SELL_SIGNAL"
+                # Ensure the detailed reason is passed
+                full_signal['exit_reason'] = signal_data['exit_reason']
 
             success = sniper.execute_order(full_signal)
             if success:

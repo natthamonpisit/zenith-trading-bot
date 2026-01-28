@@ -73,6 +73,13 @@ def render_closed_positions(db, is_sim):
 
             # --- EXIT REASON FORMATTING ---
             def format_reason(reason):
+                reason_str = str(reason)
+                # Handle detailed AI reasons
+                if reason_str.startswith("AI_SELL_SIGNAL"):
+                    parts = reason_str.split(":", 1)
+                    detail = parts[1].strip() if len(parts) > 1 else ""
+                    return f"🤖 AI Sell{': ' + detail if detail else ''}"
+
                 emoji_map = {
                     'AI_SELL_SIGNAL': '🤖 AI Sell',
                     'TRAILING_STOP': '📉 Trailing Stop',
@@ -84,7 +91,7 @@ def render_closed_positions(db, is_sim):
                     'UNKNOWN': '❓ Unknown'
                 }
                 if not reason: return '❓ Unknown'
-                return emoji_map.get(str(reason), str(reason))
+                return emoji_map.get(reason_str, reason_str)
 
             if 'exit_reason' in df.columns:
                  df['exit_reason_fmt'] = df['exit_reason'].apply(format_reason)
