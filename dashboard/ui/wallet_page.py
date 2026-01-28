@@ -1,146 +1,78 @@
 import streamlit as st
-import ccxt
-import os
+import pandas as pd
 from datetime import datetime
+from dashboard.ui.utils import to_local_time
 
 def render_wallet_page(db):
     """
     Live Readiness Check - Wallet & Balance Overview
-    Shows real-time Binance wallet balances and assets
+    
+    NEW: Reads wallet data from database (synced by Railway bot)
+    instead of direct Binance API connection
     """
     st.title("💰 Live Readiness Check")
     st.markdown("---")
     
-    # Get API credentials (Streamlit Cloud Secrets or Environment Variables)
-    try:
-        # Try Streamlit secrets first (for Streamlit Cloud)
-        api_key = st.secrets["binance"]["api_key"]
-        secret = st.secrets["binance"]["secret"]
-        api_url = st.secrets["binance"].get("api_url", "https://api.binance.com")
-    except (KeyError, FileNotFoundError):
-        # Fallback to environment variables (for local/Railway)
-        api_key = os.environ.get("BINANCE_API_KEY")
-        secret = os.environ.get("BINANCE_SECRET")
-        api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
-    
-    if not api_key or not secret:
-        st.warning("⚠️ Binance API credentials not configured")
-        st.info("💡 **Streamlit Cloud:** Add credentials in App Settings > Secrets\\n\\n**Local:** Set in `.env` file")
-        st.markdown("""
-        ```toml
-        [binance]
-        api_key = "your_api_key"
-        secret = "your_secret"
-        api_url = "https://api.binance.com"
-        ```
-        """)
-        return
-    
-    # Initialize exchange
-    try:
-        exchange = ccxt.binance({
-            'apiKey': api_key,
-            'secret': secret,
-            'urls': {'api': {'public': api_url, 'private': api_url}},
-            'enableRateLimit': True,
-        })
-        
-        # Test connection
-        with st.spinner("🔄 Connecting to Binance..."):
-            exchange.load_markets()
-        
-        st.success("✅ Connected to Binance successfully!")
-        
-    except Exception as e:
-        error_msg = str(e).lower()
-        
-        # Check for specific error types
-        if "restricted location" in error_msg or "service unavailable" in error_msg:
-            st.error("🌍 **Binance API Blocked - Restricted Location**")
-            st.warning("""
-            **Why this happens:**
-            - Binance blocks certain IP addresses/regions for compliance
-            - Streamlit Cloud's servers may be in a restricted region
-            
-            **Solutions:**
-            1. ✅ Use this feature **locally** or on **Railway** (where bot runs)
-            2. Use Binance website directly to check wallet
-            3. Deploy dashboard on a VPS in an allowed region
-            """)
-            st.info("💡 The bot on Railway can still trade normally - this only affects the dashboard view")
-        else:
-            st.error(f"❌ Failed to connect to Binance")
-            st.code(f"Error: {str(e)}", language="text")
-            st.info("💡 Check your API credentials and network connection")
-        return
-    
-    # Fetch balance
+    # Fetch wallet data from database
     st.markdown("## 📊 Wallet Balance")
     
     try:
-        with st.spinner("🔄 Fetching balance..."):
-            balance = exchange.fetch_balance()
+        with st.spinner("🔄 Loading wallet data..."):
+            result = db.table("wallet_balance")\
+                .select("*")\
+                .eq("is_active", True)\
+                .order("total", desc=True)\
+                .execute()
         
-        # Filter non-zero balances
-        assets = []
-        total_usdt_value = 0
+        if not result.data:
+            st.warning("⚠️ No wallet data available")
+            st.info("""
+            💡 **Wallet data is synced from Railway bot every 5 minutes**
+            
+            If you just started the bot, please wait a few minutes for the first sync.
+            """)
+            return
         
-        for currency, amounts in balance['total'].items():
-            if amounts > 0:
-                # Get USDT value
-                usdt_value = 0
-                if currency == 'USDT':
-                    usdt_value = amounts
-                else:
-                    try:
-                        ticker = exchange.fetch_ticker(f"{currency}/USDT")
-                        usdt_value = amounts * ticker['last']
-                    except:
-                        usdt_value = 0
-                
-                assets.append({
-                    'currency': currency,
-                    'free': amounts,
-                    'used': balance['used'].get(currency, 0),
-                    'total': amounts,
-                    'usdt_value': usdt_value
-                })
-                total_usdt_value += usdt_value
+        # Show last update time
+        last_update = result.data[0].get('updated_at')
+        if last_update:
+            st.caption(f"📅 Last updated: {to_local_time(last_update, '%Y-%m-%d %H:%M:%S')}")
         
-        # Sort by USDT value
-        assets.sort(key=lambda x: x['usdt_value'], reverse=True)
+        # Convert to DataFrame
+        df = pd.DataFrame(result.data)
         
-        # Display summary
+        # Calculate totals
+        total_usdt_value = df[df['asset'] == 'USDT']['total'].sum()
+        num_assets = len(df)
+        largest_asset = df.iloc[0]['asset'] if len(df) > 0 else "N/A"
+        
+        # Display summary metrics
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("💵 Total Portfolio Value", f"${total_usdt_value:,.2f} USDT")
         with col2:
-            st.metric("🪙 Number of Assets", len(assets))
+            st.metric("🪙 Number of Assets", num_assets)
         with col3:
-            largest_asset = assets[0]['currency'] if assets else "N/A"
             st.metric("🏆 Largest Holding", largest_asset)
         
         st.markdown("---")
         
         # Display assets table
-        if assets:
-            st.markdown("### 📋 Asset Breakdown")
-            
-            for asset in assets:
-                with st.expander(f"**{asset['currency']}** - ${asset['usdt_value']:,.2f} USDT ({asset['usdt_value']/total_usdt_value*100:.1f}%)"):
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Available", f"{asset['free']:.8f}")
-                    with col2:
-                        st.metric("In Orders", f"{asset['used']:.8f}")
-                    with col3:
-                        st.metric("Total", f"{asset['total']:.8f}")
-        else:
-            st.warning("⚠️ No assets found in wallet")
-            st.info("💡 Deposit funds to start trading")
+        st.markdown("### 📋 Asset Breakdown")
+        
+        # Format DataFrame for display
+        display_df = df[['asset', 'free', 'locked', 'total']].copy()
+        display_df.columns = ['Asset', 'Available', 'Locked', 'Total']
+        
+        # Format numbers
+        for col in ['Available', 'Locked', 'Total']:
+            display_df[col] = display_df[col].apply(lambda x: f"{float(x):.8f}")
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
         
     except Exception as e:
-        st.error(f"❌ Failed to fetch balance: {str(e)}")
+        st.error(f"❌ Failed to load wallet data: {str(e)}")
+        st.info("💡 Make sure the bot on Railway is running and syncing wallet data")
         return
     
     st.markdown("---")
@@ -149,7 +81,7 @@ def render_wallet_page(db):
     st.markdown("## ✅ Live Trading Readiness Checklist")
     
     # Check 1: Sufficient USDT
-    usdt_balance = next((a['total'] for a in assets if a['currency'] == 'USDT'), 0)
+    usdt_balance = df[df['asset'] == 'USDT']['total'].sum() if 'USDT' in df['asset'].values else 0
     min_usdt = 100  # Minimum recommended
     
     check1 = usdt_balance >= min_usdt
@@ -160,46 +92,52 @@ def render_wallet_page(db):
         help=f"Current: ${usdt_balance:.2f} USDT"
     )
     
-    # Check 2: API permissions
+    # Check 2: Strategy configured
     try:
-        exchange.fetch_my_trades(symbol='BTC/USDT', limit=1)
-        check2 = True
+        config = db.table("bot_config").select("*").execute()
+        check2 = len(config.data) > 0
     except:
         check2 = False
     
     st.checkbox(
-        "🔑 API Trading Permissions Enabled", 
-        value=check2,
-        disabled=True,
-        help="API key must have 'Enable Trading' permission"
-    )
-    
-    # Check 3: Strategy configured
-    try:
-        config = db.table("bot_config").select("*").execute()
-        check3 = len(config.data) > 0
-    except:
-        check3 = False
-    
-    st.checkbox(
         "⚙️ Strategy Configured", 
-        value=check3,
+        value=check2,
         disabled=True,
         help="Bot configuration exists in database"
     )
     
-    # Check 4: Paper mode tested
+    # Check 3: Paper mode tested
     try:
         trades = db.table("trades").select("*").eq("mode", "PAPER").execute()
-        check4 = len(trades.data) > 0
+        check3 = len(trades.data) > 0
+    except:
+        check3 = False
+    
+    st.checkbox(
+        "🧪 Paper Mode Tested", 
+        value=check3,
+        disabled=True,
+        help="At least one paper trade executed"
+    )
+    
+    # Check 4: Bot is running
+    try:
+        import time
+        hb_data = db.table("bot_config").select("value").eq("key", "LAST_HEARTBEAT").execute()
+        if hb_data.data:
+            last_hb = float(hb_data.data[0]['value'])
+            diff = time.time() - last_hb
+            check4 = diff < 120  # Bot active in last 2 minutes
+        else:
+            check4 = False
     except:
         check4 = False
     
     st.checkbox(
-        "🧪 Paper Mode Tested", 
+        "🤖 Bot Online", 
         value=check4,
         disabled=True,
-        help="At least one paper trade executed"
+        help="Bot must be running on Railway"
     )
     
     # Overall readiness
@@ -214,5 +152,17 @@ def render_wallet_page(db):
         st.warning("⚠️ **Not ready for LIVE trading yet**")
         st.info("💡 Complete all checklist items before switching to LIVE mode")
     
-    # Last updated
-    st.caption(f"🕐 Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Info about wallet sync
+    with st.expander("ℹ️ About Wallet Data"):
+        st.markdown("""
+        ### How it works:
+        
+        1. **Bot on Railway** fetches Binance wallet balance every 5 minutes
+        2. **Stores in Supabase** database (`wallet_balance` table)
+        3. **Dashboard reads** from database instead of Binance directly
+        
+        **Why?** Streamlit Cloud's IP may be blocked by Binance for compliance reasons.
+        This approach ensures you can always view your wallet balance on the dashboard.
+        
+        **Note:** Data is refreshed every 5 minutes. For real-time balance, check Binance directly.
+        """)

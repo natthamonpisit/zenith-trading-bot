@@ -12,6 +12,7 @@ from src.roles.job_news import NewsSpy
 from src.roles.job_scout import Radar
 from src.roles.job_analysis import Strategist, Judge
 from src.roles.job_executor import SniperExecutor
+from src.roles.job_wallet import WalletSync
 
 # Thread-safe heartbeat tracking
 _heartbeat_lock = threading.Lock()
@@ -35,6 +36,7 @@ radar = Radar(price_spy) # Radar uses PriceSpy
 strategist = Strategist()
 judge = Judge()
 sniper = SniperExecutor(spy_instance=price_spy)
+wallet_sync = WalletSync(db, sniper.exchange)  # Use sniper's exchange instance
 
 TIMEFRAME = "1h"
 
@@ -469,6 +471,15 @@ def start():
             cycle_minutes = 2
 
         schedule.every(cycle_minutes).minutes.do(run_trading_cycle)
+        
+        # Schedule wallet sync every 5 minutes
+        schedule.every(5).minutes.do(wallet_sync.sync_wallet)
+        
+        # Run wallet sync once on startup
+        try:
+            wallet_sync.sync_wallet()
+        except Exception as e:
+            log_activity("WalletSync", f"Initial sync failed: {e}", "ERROR")
 
         print(f"Bot scheduled for {cycle_minutes}-minute Sniper cycles.")
         
