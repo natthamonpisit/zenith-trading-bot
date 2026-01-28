@@ -475,7 +475,18 @@ def start():
         except Exception as e:
             print(f"Heartbeat/Mode init error: {e}")
         
-        # Run once immediately
+        # --- IMMEDIATE ACTIONS ---
+        
+        # 1. Sync Wallet FIRST (Fast & Important for UI)
+        print("💰 Syncing Wallet Data...")
+        try:
+            wallet_sync.sync_wallet()
+            print("✅ Wallet Sync Complete")
+        except Exception as e:
+            log_activity("WalletSync", f"Initial sync failed: {e}", "ERROR")
+
+        # 2. Run Trading Cycle (Can take time)
+        print("🚀 Starting First Trading Cycle...")
         run_trading_cycle()
 
         # Load trading cycle interval from DB (default 2 minutes)
@@ -489,12 +500,6 @@ def start():
         
         # Schedule wallet sync every 5 minutes
         schedule.every(5).minutes.do(wallet_sync.sync_wallet)
-        
-        # Run wallet sync once on startup
-        try:
-            wallet_sync.sync_wallet()
-        except Exception as e:
-            log_activity("WalletSync", f"Initial sync failed: {e}", "ERROR")
 
         print(f"Bot scheduled for {cycle_minutes}-minute Sniper cycles.")
         
