@@ -21,6 +21,7 @@ from dashboard.ui.simulation_page import render_simulation_page
 from dashboard.ui.status_page import render_status_page
 from dashboard.ui.analysis_page import render_analysis_page
 from dashboard.ui.fundamental_page import render_fundamental_page
+from dashboard.ui.session_history_page import render_session_history_page
 
 # --- CONFIG ---
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
@@ -65,6 +66,8 @@ elif st.session_state.page == 'Fundamental Lab':
     render_fundamental_page(db)
 elif st.session_state.page == 'Trade History':
     render_history_page(db)
+elif st.session_state.page == 'Session History':
+    render_session_history_page(db)
 elif st.session_state.page == 'Simulation Mode':
     render_simulation_page(db)
 elif st.session_state.page == 'System Status':

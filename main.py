@@ -14,6 +14,13 @@ from src.roles.job_analysis import Strategist, Judge
 from src.roles.job_executor import SniperExecutor
 from src.roles.job_wallet import WalletSync
 
+# --- IMPORT SESSION MANAGER ---
+from src.session_manager import (
+    get_active_session,
+    create_session,
+    take_balance_snapshot
+)
+
 # Thread-safe heartbeat tracking
 _heartbeat_lock = threading.Lock()
 _last_heartbeat = time.time()
@@ -376,6 +383,40 @@ def run_trading_cycle():
     # 0. Check trailing stops BEFORE processing new signals
     check_trailing_stops()
 
+    # 0b. Take balance snapshots for both modes (for drawdown tracking)
+    try:
+        # Get current mode
+        mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
+        current_mode = str(mode_cfg.data[0]['value']).replace('"', '').strip() if mode_cfg.data else "PAPER"
+
+        # Take snapshot for current active mode
+        session = get_active_session(mode=current_mode)
+        if session:
+            if current_mode == "PAPER":
+                sim_wallet = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
+                balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
+            else:
+                bal_data = price_spy.get_account_balance()
+                balance = bal_data['total'].get('USDT', 0.0) if bal_data else 0.0
+
+            # Calculate unrealized P&L from open positions
+            unrealized_pnl = 0.0
+            open_pos = db.table("positions").select("*, assets(symbol)").eq("is_open", True).eq("is_sim", (current_mode == "PAPER")).execute()
+            if open_pos.data:
+                for pos in open_pos.data:
+                    try:
+                        symbol = pos['assets']['symbol'] if pos['assets'] else None
+                        if symbol:
+                            ticker = price_spy.exchange.fetch_ticker(symbol)
+                            curr_price = ticker['last']
+                            unrealized_pnl += (curr_price - float(pos['entry_avg'])) * float(pos['quantity'])
+                    except:
+                        pass
+
+            take_balance_snapshot(session['id'], balance, unrealized_pnl)
+    except Exception as e:
+        print(f"Balance snapshot error: {e}")
+
     # 1. Check if we need to Farm first
     try:
         last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
@@ -514,6 +555,36 @@ def start():
             print("✅ Wallet Sync Complete")
         except Exception as e:
             log_activity("WalletSync", f"Initial sync failed: {e}", "ERROR")
+
+        # 1b. Initialize Trading Sessions
+        print("📊 Initializing Trading Sessions...")
+        try:
+            # Check/create session for PAPER mode
+            paper_session = get_active_session(mode='PAPER')
+            if not paper_session:
+                # Get current simulation balance
+                sim_wallet = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
+                start_balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
+                create_session(mode='PAPER', start_balance=start_balance, session_name="Paper Session (Auto-Start)")
+                print("✅ Created PAPER session")
+            else:
+                print(f"✅ Using existing PAPER session: {paper_session['session_name']}")
+
+            # Check/create session for LIVE mode
+            live_session = get_active_session(mode='LIVE')
+            if not live_session:
+                # Get current live balance
+                try:
+                    bal_data = price_spy.get_account_balance()
+                    start_balance = bal_data['total'].get('USDT', 1000.0) if bal_data else 1000.0
+                except:
+                    start_balance = 1000.0
+                create_session(mode='LIVE', start_balance=start_balance, session_name="Live Session (Auto-Start)")
+                print("✅ Created LIVE session")
+            else:
+                print(f"✅ Using existing LIVE session: {live_session['session_name']}")
+        except Exception as e:
+            log_activity("System", f"Session initialization failed: {e}", "ERROR")
 
         # 2. Run Trading Cycle (Can take time)
         print("🚀 Starting First Trading Cycle...")

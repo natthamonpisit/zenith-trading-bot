@@ -3,6 +3,7 @@ import os
 import threading
 from src.database import get_db
 from src.roles.job_price import PriceSpy # Re-use Spy's connection logic if possible, or new instance
+from src.session_manager import get_active_session, update_session_stats
 
 # Lock to prevent concurrent simulation balance updates
 _sim_balance_lock = threading.Lock()
@@ -103,8 +104,14 @@ class SniperExecutor:
                             self.db.table("positions").update({
                                 "is_open": False,
                                 "exit_price": fill_price,
-                                "pnl": pnl
+                                "pnl": pnl,
+                                "closed_at": "NOW()"
                             }).eq("id", pos['id']).execute()
+
+                            # Update session stats
+                            session_id = pos.get('session_id')
+                            if session_id:
+                                update_session_stats(session_id, pnl)
 
                             fill_amount = qty
                             print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Revenue: ${revenue:,.2f} | PnL: ${pnl:,.2f}")
@@ -159,6 +166,12 @@ class SniperExecutor:
                 # BUY: Create a new open position
                 # Map BUY→LONG to match DB CHECK constraint (side IN ('LONG','SHORT'))
                 entry_atr = signal.get('entry_atr', 0.0)  # Get ATR from signal
+
+                # Get active session for current mode
+                mode = 'PAPER' if is_sim else 'LIVE'
+                session = get_active_session(mode=mode)
+                session_id = session['id'] if session else None
+
                 self.db.table("positions").insert({
                    "asset_id": signal['asset_id'],
                    "side": "LONG",
@@ -168,7 +181,8 @@ class SniperExecutor:
                    "is_sim": is_sim,
                    "highest_price_seen": fill_price,
                    "trailing_stop_price": None,
-                   "entry_atr": entry_atr  # Store ATR for trailing stop
+                   "entry_atr": entry_atr,  # Store ATR for trailing stop
+                   "session_id": session_id  # Link to trading session
                 }).execute()
             else:
                 # SELL: Position already closed above (sim) or record close for live
@@ -183,8 +197,15 @@ class SniperExecutor:
                         self.db.table("positions").update({
                             "is_open": False,
                             "exit_price": fill_price,
-                            "pnl": pnl
+                            "pnl": pnl,
+                            "closed_at": "NOW()"
                         }).eq("id", pos['id']).execute()
+
+                        # Update session stats
+                        session_id = pos.get('session_id')
+                        if session_id:
+                            update_session_stats(session_id, pnl)
+
                         print(f"Sniper (Live): Closed position. Exit: ${fill_price:,.2f} | PnL: ${pnl:,.2f}")
             
             # 3. Update Signal Status

@@ -5,7 +5,76 @@ from .utils import get_cfg
 def render_config_page(db):
     st.markdown("### ⚙️ Strategy Configuration")
     st.caption("Adjust the brain parameters of the AI Strategist and Risk Judge.")
-    
+
+    # Paper Trading Session Management
+    with st.container(border=True):
+        st.markdown("#### 🔄 Paper Trading Session")
+
+        try:
+            # Import session manager functions
+            import sys
+            import os
+            sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+            from src.session_manager import get_active_session, reset_simulation_session, get_session_count
+
+            # Show current session info
+            current_session = get_active_session(mode='PAPER')
+            if current_session:
+                st.info(f"**Current Session:** {current_session['session_name']}")
+                started = current_session['started_at'][:19] if current_session['started_at'] else "N/A"
+                balance = float(current_session['current_balance'])
+                net_pnl = float(current_session['net_pnl'])
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Started", started)
+                c2.metric("Balance", f"${balance:,.2f}")
+                c3.metric("Net P&L", f"${net_pnl:,.2f}")
+                c4.metric("Trades", current_session['total_trades'])
+
+            # Reset section
+            with st.expander("🆕 Start New Simulation", expanded=False):
+                st.warning("⚠️ This will end the current session and start a fresh simulation.")
+
+                r1, r2 = st.columns(2)
+                with r1:
+                    new_balance = st.number_input(
+                        "Starting Balance ($)",
+                        min_value=100.0,
+                        max_value=1000000.0,
+                        value=1000.0,
+                        step=100.0,
+                        help="Initial capital for the new simulation session"
+                    )
+                with r2:
+                    session_count = get_session_count(mode='PAPER')
+                    default_name = f"Paper Run #{session_count + 1}"
+                    session_name = st.text_input(
+                        "Session Name (optional)",
+                        value=default_name,
+                        help="Custom name for this simulation run"
+                    )
+
+                if st.button("🔄 Reset & Start Fresh", type="secondary", use_container_width=True):
+                    try:
+                        new_session_id = reset_simulation_session(
+                            new_balance=new_balance,
+                            session_name=session_name
+                        )
+                        if new_session_id:
+                            st.success(f"✅ Started new session: {session_name}")
+                            st.info("💡 Previous session data has been archived and can be viewed in Session History.")
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to create new session")
+                    except Exception as e:
+                        st.error(f"Reset failed: {e}")
+
+        except Exception as e:
+            st.error(f"Session management error: {e}")
+
+    st.markdown("---")
+
     with st.container(border=True):
         st.markdown("#### 🧠 AI & Logic Parameters")
         col1, col2 = st.columns(2)
