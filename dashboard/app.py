@@ -40,30 +40,16 @@ if not check_password():
 show_logout_button()
 
 
-# GATEKEEPER removed for local development - direct access enabled
-
+# GATEKEEPER removed for Streamlit Cloud deployment
+# (Farming check only needed when bot runs on same machine as dashboard)
 
 from dashboard.ui.farming_page import render_farming_page
 import time
 
-# --- GATEKEEPER (Farming Check) ---
-# Check if data is fresh (within configured farming interval)
-is_fresh = False
-try:
-    farm_interval_cfg = db.table("bot_config").select("value").eq("key", "FARMING_INTERVAL_HOURS").execute()
-    farm_interval_secs = float(farm_interval_cfg.data[0]['value']) * 3600 if farm_interval_cfg.data else 43200
-
-    last_farm = db.table("bot_config").select("value").eq("key", "LAST_FARM_TIME").execute()
-    if last_farm.data:
-        elapsed = time.time() - float(last_farm.data[0]['value'])
-        if elapsed < farm_interval_secs:
-            is_fresh = True
-except Exception as e:
-    print(f"Farming freshness check error: {e}")
-
-if not is_fresh and not st.session_state.get('farming_complete'):
-    render_farming_page(db)
-    st.stop() # Stop here, don't show dashboard
+# Skip farming check for Streamlit Cloud (bot runs on Railway, not here)
+# Mark as complete so dashboard loads normally
+if 'farming_complete' not in st.session_state:
+    st.session_state.farming_complete = True
 
 # --- MODULE ROUTING ---
 render_sidebar(db)
