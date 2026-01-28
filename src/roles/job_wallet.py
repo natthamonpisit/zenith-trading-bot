@@ -59,11 +59,24 @@ class WalletSync:
             assets = []
             for asset, amount in balance['total'].items():
                 if amount > 0:  # Only active balances
+                    # Calculate USD value
+                    usd_value = 0.0
+                    if asset == 'USDT':
+                        usd_value = amount
+                    else:
+                        try:
+                            ticker = self.exchange.fetch_ticker(f"{asset}/USDT")
+                            usd_value = amount * ticker['last']
+                        except Exception as e:
+                            print(f"⚠️ Could not fetch price for {asset}: {e}")
+                            usd_value = 0.0
+                    
                     assets.append({
                         "asset": asset,
                         "free": float(balance['free'].get(asset, 0)),
                         "locked": float(balance['used'].get(asset, 0)),
                         "total": float(amount),
+                        "usd_value": float(usd_value),
                         "is_active": True
                     })
             

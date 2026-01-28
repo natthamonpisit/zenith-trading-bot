@@ -41,47 +41,11 @@ def render_wallet_page(db):
         # Convert to DataFrame
         df = pd.DataFrame(result.data)
         
-        # Calculate USDT values for all assets
-        try:
-            import ccxt
-            import os
-            
-            # Initialize exchange for price lookup
-            api_key = os.environ.get("BINANCE_API_KEY")
-            secret = os.environ.get("BINANCE_SECRET")
-            api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
-            
-            if api_key and secret:
-                exchange = ccxt.binance({
-                    'apiKey': api_key,
-                    'secret': secret,
-                    'urls': {'api': {'public': api_url, 'private': api_url}},
-                    'enableRateLimit': True,
-                })
-                
-                # Calculate USD value for each asset
-                total_usdt_value = 0.0
-                for idx, row in df.iterrows():
-                    asset = row['asset']
-                    amount = float(row['total'])
-                    
-                    if asset == 'USDT':
-                        usdt_value = amount
-                    else:
-                        try:
-                            ticker = exchange.fetch_ticker(f"{asset}/USDT")
-                            usdt_value = amount * ticker['last']
-                        except:
-                            usdt_value = 0.0
-                    
-                    df.at[idx, 'usd_value'] = usdt_value
-                    total_usdt_value += usdt_value
-            else:
-                # Fallback: count only USDT
-                total_usdt_value = df[df['asset'] == 'USDT']['total'].sum()
-                
-        except Exception as e:
-            st.warning(f"⚠️ Could not fetch prices: {e}")
+        # Calculate total portfolio value (sum of usd_value column)
+        if 'usd_value' in df.columns:
+            total_usdt_value = df['usd_value'].sum()
+        else:
+            # Fallback if no usd_value
             total_usdt_value = df[df['asset'] == 'USDT']['total'].sum()
         
         # Calculate totals
