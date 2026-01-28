@@ -84,6 +84,15 @@ class StatusHandler(BaseHTTPRequestHandler):
             result = db.table("bot_config").select("value").eq("key", "BOT_START_TIME").execute()
             if result.data:
                 start_ts = float(result.data[0]['value'])
+                
+                # Sanity check: If start time is 0 or very old (e.g. > 10 years ago), it's likely a reset placeholder
+                if start_ts < 10000 or (time.time() - start_ts) > (3650 * 86400):
+                    return {
+                        'duration': 'Just Reset',
+                        'start_time': 'Initializing...',
+                        'is_valid': True
+                    }
+
                 diff = time.time() - start_ts
                 
                 # Convert to readable format

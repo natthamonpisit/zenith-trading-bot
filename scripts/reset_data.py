@@ -91,8 +91,9 @@ def reset_all_data():
         print("... Resetting Wallet Balance")
         db.table("simulation_portfolio").update({"balance": 1000.0, "total_pnl": 0}).eq("id", 1).execute()
 
-        # Update Last Heartbeat (optional)
-        db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": "0"}).execute()
+        # Update Last Heartbeat (Reset time to NOW)
+        import time
+        db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": str(time.time())}).execute()
         
         print("\n✅ FACTORY RESET COMPLETE!")
         print("You can now restart the bot for a fresh run.")

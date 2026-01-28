@@ -258,9 +258,9 @@ def render_config_page(db):
                                 db.table("simulation_portfolio").update({"balance": 1000.0, "total_pnl": 0}).eq("id", 1).execute()
                             except: pass
 
-                            # Reset Start Time
+                            # Reset Start Time (Set to NOW so uptime counts from reset)
                             try:
-                                db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": "0"}).execute()
+                                db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": str(time.time())}).execute()
                             except: pass
                         
                         st.success("✅ Factory Reset Complete! All history has been wiped.")
