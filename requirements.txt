@@ -3,6 +3,7 @@ streamlit
 supabase
 python-dotenv
 pandas
+pandas-ta-classic
 ccxt
 google-generativeai
 tenacity
