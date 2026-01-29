@@ -639,49 +639,41 @@ def start():
         except Exception as e:
             log_activity("WalletSync", f"Initial sync failed: {e}", "ERROR")
 
-        # 2. Ensure Active Session Exists (Auto-Start after Reset)
-        try:
-            current_mode = "LIVE" if mode == "LIVE" else "PAPER"
-            from src.session_manager import get_active_session, create_session
-            
-            active_session = get_active_session(mode=current_mode)
-            if not active_session:
-                print(f"🆕 No active {current_mode} session found. Creating initial session...")
-                new_session_id = create_session(mode=current_mode, start_balance=1000.0) # Default 1000
-                log_activity("System", f"Auto-created initial {current_mode} session", "INFO")
-            else:
-                print(f"✅ Resume Active Session: {active_session['session_name']}")
-        except Exception as e:
-            print(f"⚠️ Session Auto-Start Failed: {e}")
-
-        # 1b. Initialize Trading Sessions
+        # 2. Initialize Trading Sessions (Create if missing after factory reset)
         print("📊 Initializing Trading Sessions...")
         try:
+            from src.session_manager import get_active_session, create_session
+
             # Check/create session for PAPER mode
             paper_session = get_active_session(mode='PAPER')
             if not paper_session:
                 # Get current simulation balance
                 sim_wallet = db.table("simulation_portfolio").select("balance").eq("id", 1).execute()
                 start_balance = float(sim_wallet.data[0]['balance']) if sim_wallet.data else 1000.0
-                create_session(mode='PAPER', start_balance=start_balance, session_name="Paper Session (Auto-Start)")
-                print("✅ Created PAPER session")
+                paper_id = create_session(mode='PAPER', start_balance=start_balance)
+                if paper_id:
+                    print("✅ Created PAPER session (auto-start after reset)")
+                    log_activity("System", "Auto-created PAPER trading session", "INFO")
             else:
-                print(f"✅ Using existing PAPER session: {paper_session['session_name']}")
+                print(f"✅ Resuming PAPER session: {paper_session['session_name']}")
 
             # Check/create session for LIVE mode
             live_session = get_active_session(mode='LIVE')
             if not live_session:
-                # Get current live balance
+                # Get current live balance (or default)
                 try:
                     bal_data = price_spy.get_account_balance()
                     start_balance = bal_data['total'].get('USDT', 1000.0) if bal_data else 1000.0
                 except:
                     start_balance = 1000.0
-                create_session(mode='LIVE', start_balance=start_balance, session_name="Live Session (Auto-Start)")
-                print("✅ Created LIVE session")
+                live_id = create_session(mode='LIVE', start_balance=start_balance)
+                if live_id:
+                    print("✅ Created LIVE session (auto-start after reset)")
+                    log_activity("System", "Auto-created LIVE trading session", "INFO")
             else:
-                print(f"✅ Using existing LIVE session: {live_session['session_name']}")
+                print(f"✅ Resuming LIVE session: {live_session['session_name']}")
         except Exception as e:
+            print(f"⚠️ Session initialization error: {e}")
             log_activity("System", f"Session initialization failed: {e}", "ERROR")
 
         # 2. Run Trading Cycle (Can take time)

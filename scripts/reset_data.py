@@ -94,7 +94,27 @@ def reset_all_data():
         # Update Last Heartbeat (Reset time to NOW)
         import time
         db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": str(time.time())}).execute()
-        
+
+        # Create initial session so dashboard shows data immediately
+        print("... Creating Initial Session (Paper Run #1)")
+        from src.session_manager import create_session
+        try:
+            # Create Paper session
+            paper_session_id = create_session(mode='PAPER', start_balance=1000.0, session_name="Paper Run #1")
+            if paper_session_id:
+                print(f"    ✅ Created PAPER session: Paper Run #1")
+            else:
+                print("    ⚠️ Failed to create PAPER session")
+
+            # Create Live session
+            live_session_id = create_session(mode='LIVE', start_balance=1000.0, session_name="Live Session #1")
+            if live_session_id:
+                print(f"    ✅ Created LIVE session: Live Session #1")
+            else:
+                print("    ⚠️ Failed to create LIVE session")
+        except Exception as e:
+            print(f"    ⚠️ Session creation error (will auto-create on bot restart): {e}")
+
         print("\n✅ FACTORY RESET COMPLETE!")
         print("You can now restart the bot for a fresh run.")
 

@@ -19,7 +19,11 @@ def render_session_history_page(db):
         sessions = query.execute()
 
         if not sessions.data:
-            st.info(f"No {mode_filter.lower() if mode_filter != 'ALL' else ''} trading sessions found.")
+            st.warning(f"No {mode_filter.lower() if mode_filter != 'ALL' else ''} trading sessions found.")
+            st.info("💡 **What to do:**\n"
+                   "- If you just performed a factory reset, restart the bot to create initial sessions\n"
+                   "- If the bot is running, sessions will be created automatically\n"
+                   "- You can also create a new session from the Config page")
             return
 
         # Summary metrics

@@ -34,10 +34,13 @@ def render_session_history(db, is_sim):
             .limit(5)\
             .execute()
 
-        if sessions.data:
-            st.markdown(f"#### 📅 Session History (Last 5)")
-            
-            for s in sessions.data:
+        st.markdown(f"#### 📅 Session History (Last 5)")
+
+        if not sessions.data:
+            st.info(f"No {db_mode} sessions found. If you just reset the bot, restart it to create a new session.")
+            return
+
+        for s in sessions.data:
                 # Prepare Header Info
                 s_name = s.get('session_name', 'Unnamed Session')
                 net_pnl = float(s.get('net_pnl', 0))
