@@ -11,12 +11,21 @@ def render_session_history_page(db):
     mode_filter = st.radio("Filter by Mode:", ["ALL", "PAPER", "LIVE"], horizontal=True)
 
     try:
-        # Fetch sessions
+        # Fetch sessions with retry on connection errors
         query = db.table("trading_sessions").select("*").order("started_at", desc=True)
         if mode_filter != "ALL":
             query = query.eq("mode", mode_filter)
 
-        sessions = query.execute()
+        try:
+            sessions = query.execute()
+        except OSError as e:
+            # Handle connection errors (Errno 11, timeouts, etc.)
+            st.error(f"⚠️ Database connection error: {e}")
+            st.info("🔄 Try refreshing the page. If the error persists, check:\n"
+                   "- Supabase service status\n"
+                   "- Your internet connection\n"
+                   "- SUPABASE_URL and SUPABASE_KEY in .env")
+            return
 
         if not sessions.data:
             st.warning(f"No {mode_filter.lower() if mode_filter != 'ALL' else ''} trading sessions found.")

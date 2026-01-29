@@ -27,12 +27,19 @@ def render_session_history(db, is_sim):
     db_mode = "PAPER" if is_sim else "LIVE"
     try:
         # Fetch last 5 filtered sessions
-        sessions = db.table("trading_sessions")\
-            .select("*")\
-            .eq("mode", db_mode)\
-            .order("created_at", desc=True)\
-            .limit(5)\
-            .execute()
+        try:
+            sessions = db.table("trading_sessions")\
+                .select("*")\
+                .eq("mode", db_mode)\
+                .order("created_at", desc=True)\
+                .limit(5)\
+                .execute()
+        except OSError as e:
+            # Handle connection errors (Errno 11, timeouts, etc.)
+            st.markdown(f"#### 📅 Session History (Last 5)")
+            st.error(f"⚠️ Database connection error: {e}")
+            st.info("🔄 Try refreshing the page.")
+            return
 
         st.markdown(f"#### 📅 Session History (Last 5)")
 
