@@ -99,6 +99,10 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             print(f"❌ Indicator Calculation Failed for {pair}")
             return
 
+        # Calculate Market Trend (for downtrend protection)
+        trend_data = price_spy.detect_market_trend(df)
+        print(f"   - Market Trend: {trend_data['trend']} (Strength: {trend_data['strength']:.0f}%, Confidence: {trend_data['confidence']:.0f}%)")
+
         # 2. STRATEGIST (AI)
         print("2. Strategist Analyzing...")
         
@@ -112,7 +116,14 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             asset_id = asset.data[0]['id']
 
         # Send only relevant columns to reduce prompt size and avoid timestamp/NaN issues
-        tech_cols = ['close', 'open', 'high', 'low', 'volume', 'rsi', 'macd', 'signal', 'ema_20', 'ema_50', 'atr']
+        tech_cols = [
+            'close', 'open', 'high', 'low', 'volume',
+            'rsi', 'macd', 'signal',
+            'ema_20', 'ema_50', 'ema_200',  # Add EMA 200
+            'atr',
+            'adx', 'dmp', 'dmn',  # Add ADX components
+            'ema_50_slope', 'price_position_score'  # Add derived indicators
+        ]
         available_cols = [c for c in tech_cols if c in df.columns]
         tech_snapshot = df[available_cols].tail(5).fillna(0).round(6).to_dict()
         
@@ -162,7 +173,8 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             'ema_50': df['ema_50'].iloc[-1],
             'macd': df['macd'].iloc[-1],
             'macd_signal': df['signal'].iloc[-1],
-            'close': df['close'].iloc[-1]
+            'close': df['close'].iloc[-1],
+            'market_trend': trend_data  # Add trend data for downtrend protection
         }
         
         is_sim = (mode == "PAPER")
@@ -611,11 +623,14 @@ def start():
         try:
              current_time_str = str(time.time())
              db.table("bot_config").upsert({"key": "LAST_HEARTBEAT", "value": current_time_str}).execute()
-             
-             # Record Start Time (for Uptime tracking)
-             db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": current_time_str}).execute()
-             
-             print("💓 Heartbeat & Start Time Initialized in DB")
+
+             # Record Start Time (for Uptime tracking) - only if not already set
+             start_time_check = db.table("bot_config").select("value").eq("key", "BOT_START_TIME").execute()
+             if not start_time_check.data:
+                 db.table("bot_config").upsert({"key": "BOT_START_TIME", "value": current_time_str}).execute()
+                 print("💓 Heartbeat Initialized | 🕐 Start Time Set (First Run)")
+             else:
+                 print("💓 Heartbeat Initialized | 🕐 Start Time Preserved")
              
              # Set MODE based on config
              mode_cfg = db.table("bot_config").select("value").eq("key", "TRADING_MODE").execute()
