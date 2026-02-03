@@ -133,22 +133,43 @@ class Strategist:
             task_instruction = "Current Status: NO POSITION. Evaluate for BUY (Entry) only. DO NOT recommend SELL."
             valid_actions = '"BUY" | "WAIT"'
 
+        # Build trend context string for AI
+        trend_context = ""
+        if 'market_trend' in tech_data:
+            trend = tech_data['market_trend']
+            trend_context = f"""
+
+**MARKET TREND ANALYSIS:**
+- Overall Trend: {trend.get('trend', 'UNKNOWN')}
+- Trend Strength: {trend.get('strength', 0):.0f}%
+- Confidence: {trend.get('confidence', 0):.0f}%
+- EMA Alignment: {trend.get('signals', {}).get('ema_aligned', 'UNKNOWN')}
+- ADX: {trend.get('signals', {}).get('adx', 0):.1f}
+- Price vs EMA200: {trend.get('signals', {}).get('price_vs_ema200', 'UNKNOWN')}
+
+**CONTEXT:** In downtrends, be MORE CONSERVATIVE. Require stronger bullish signals.
+Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
+"""
+
         prompt = f"""
-        You are a Senior Crypto Trader & Risk Analyst (The Strategist). 
-        Analyze the following asset: {asset_symbol}.
-        
+        You are a Senior Crypto Trader & Risk Analyst (The Strategist).
+        Analyze: {asset_symbol}
+
         {task_instruction}
-        
+
         Technical Data:
         {json.dumps(tech_data, default=str)}
-        
+
+        {trend_context}
+
         Task:
-        1. Evaluate the trend based on RSI, MACD, and ATR.
-        2. Assign a sentiment score (-1.0 to 1.0).
-        3. Provide a confidence level (0-100%).
-        4. Explain your reasoning concisely.
-        
-        Output format: VALID JSON ONLY.
+        1. Evaluate trend (RSI, MACD, ATR, EMA structure)
+        2. **CRITICAL**: Consider overall market trend. Be selective in downtrends.
+        3. Sentiment score (-1.0 to 1.0)
+        4. Confidence (0-100%). LOWER in unfavorable conditions.
+        5. Reasoning (mention market trend if relevant)
+
+        Output: VALID JSON ONLY
         {{
             "sentiment_score": float,
             "confidence": int,
@@ -529,8 +550,57 @@ class Judge:
             except Exception as e:
                 print(f"[Judge] Error checking sell position: {e}")
 
+        # --- 0d. DOWNTREND PROTECTION (BUY only) ---
+        if ai_rec == 'BUY':
+            downtrend_enabled = self.config.get('ENABLE_DOWNTREND_PROTECTION', 'false').lower() == 'true'
+
+            if downtrend_enabled:
+                market_trend = tech_data.get('market_trend', {})
+                trend_type = market_trend.get('trend', 'NEUTRAL')
+                trend_strength = market_trend.get('strength', 0)
+                trend_confidence = market_trend.get('confidence', 0)
+                protection_mode = self.config.get('DOWNTREND_PROTECTION_MODE', 'MODERATE')
+
+                if protection_mode == 'STRICT':
+                    if trend_type in ['DOWNTREND', 'STRONG_DOWNTREND']:
+                        return TradeDecision(
+                            decision="REJECTED",
+                            size=0,
+                            reason=f"Downtrend Protection (STRICT): Market in {trend_type} (confidence: {trend_confidence:.0f}%)"
+                        )
+
+                elif protection_mode == 'MODERATE':
+                    if trend_type == 'STRONG_DOWNTREND':
+                        return TradeDecision(
+                            decision="REJECTED",
+                            size=0,
+                            reason=f"Downtrend Protection (MODERATE): Strong downtrend (strength: {trend_strength:.0f}%)"
+                        )
+                    elif trend_type == 'DOWNTREND':
+                        downtrend_ai_boost = float(self.config.get('DOWNTREND_AI_BOOST', 20))
+                        adjusted_min_conf = float(self.config.get('AI_CONF_THRESHOLD', 60)) + downtrend_ai_boost
+
+                        if ai_conf < adjusted_min_conf:
+                            return TradeDecision(
+                                decision="REJECTED",
+                                size=0,
+                                reason=f"Downtrend Protection (MODERATE): AI confidence {ai_conf}% < {adjusted_min_conf:.0f}% (downtrend penalty)"
+                            )
+
+                elif protection_mode == 'SELECTIVE':
+                    if trend_type in ['DOWNTREND', 'STRONG_DOWNTREND']:
+                        price_vs_ema200 = market_trend.get('signals', {}).get('price_vs_ema200', 'BELOW')
+                        price_position = market_trend.get('signals', {}).get('price_position', 0)
+
+                        if price_vs_ema200 == 'BELOW' or price_position < 2:
+                            return TradeDecision(
+                                decision="REJECTED",
+                                size=0,
+                                reason=f"Downtrend Protection (SELECTIVE): Coin lacks relative strength"
+                            )
+
         # --- 1. THE HARD GUARDRAILS ---
-        
+
         # A. RSI Veto (Always Active)
         rsi_limit = float(self.config.get('RSI_THRESHOLD', 75))
         if ai_rec == 'BUY' and rsi > rsi_limit:
@@ -581,6 +651,20 @@ class Judge:
         # Default to 5% if not set
         pos_size_pct = float(self.config.get('POSITION_SIZE_PCT', 5.0)) / 100
         calculated_size = portfolio_balance * pos_size_pct
+
+        # Apply downtrend size reduction
+        downtrend_enabled = self.config.get('ENABLE_DOWNTREND_PROTECTION', 'false').lower() == 'true'
+        if downtrend_enabled:
+            market_trend = tech_data.get('market_trend', {})
+            trend_type = market_trend.get('trend', 'NEUTRAL')
+
+            if trend_type == 'DOWNTREND':
+                reduction_pct = float(self.config.get('DOWNTREND_SIZE_REDUCTION_PCT', 30)) / 100
+                calculated_size *= (1 - reduction_pct)
+                print(f"[Judge] Downtrend: Reduced position size by {reduction_pct*100}%")
+            elif trend_type == 'STRONG_DOWNTREND':
+                calculated_size *= 0.5
+                print(f"[Judge] Strong Downtrend: Reduced position size by 50%")
 
         # Apply MAX_RISK_PER_TRADE limit
         max_risk_pct = float(self.config.get('MAX_RISK_PER_TRADE', 10.0)) / 100

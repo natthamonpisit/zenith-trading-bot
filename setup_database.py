@@ -112,7 +112,12 @@ VALUES
 ('FARMING_INTERVAL_HOURS', '12', 'Hours between farming cycles'),
 ('TRAILING_STOP_ENABLED', 'true', 'Enable trailing stop loss'),
 ('TRAILING_STOP_PCT', '3.0', 'Trailing stop percentage below peak price'),
-('MIN_PROFIT_TO_TRAIL_PCT', '1.0', 'Minimum profit % before trailing stop activates')
+('MIN_PROFIT_TO_TRAIL_PCT', '1.0', 'Minimum profit % before trailing stop activates'),
+('ENABLE_DOWNTREND_PROTECTION', 'false', 'Enable market-wide downtrend protection'),
+('DOWNTREND_PROTECTION_MODE', 'MODERATE', 'Protection mode: STRICT, MODERATE, or SELECTIVE'),
+('DOWNTREND_AI_BOOST', '20', 'Additional AI confidence % required during downtrends'),
+('DOWNTREND_SIZE_REDUCTION_PCT', '30', 'Position size reduction % in moderate downtrends'),
+('ADX_TREND_THRESHOLD', '25', 'ADX above this value indicates a trending market')
 ON CONFLICT DO NOTHING;
 
 -- 8. System Logs

@@ -48,9 +48,10 @@ docker run --env-file .env zenith-bot   # Runs run.sh → main.py + status_serve
 ```
 Radar (job_scout.py)         → scans top-volume USDT pairs
 HeadHunter (job_screener.py) → filters by volume, blacklist, universe mode
-PriceSpy (job_price.py)      → OHLCV data + indicators (RSI, MACD, EMA, ATR, BBands)
-Strategist (job_analysis.py) → sends tech data to Gemini AI, gets BUY/SELL/WAIT
-Judge (job_analysis.py)      → rule validation + position sizing
+PriceSpy (job_price.py)      → OHLCV data + indicators (RSI, MACD, EMA20/50/200, ATR, BBands, ADX, slopes, price position)
+                              → detect_market_trend() for downtrend protection
+Strategist (job_analysis.py) → sends tech data + trend context to Gemini AI, gets BUY/SELL/WAIT
+Judge (job_analysis.py)      → rule validation + downtrend protection + position sizing
 SniperExecutor (job_executor.py) → market order execution (paper or live)
 WalletSync (job_wallet.py)   → syncs Binance wallet to DB for dashboard
 ```
@@ -58,6 +59,7 @@ WalletSync (job_wallet.py)   → syncs Binance wallet to DB for dashboard
 ### Key Design Decisions
 
 - **Binance TH workarounds**: CCXT's margin/futures APIs don't work with Binance TH. Raw `privateGetAccount()` and direct HTTP requests to `api.binance.th` are used instead. See `job_wallet.py` and `job_price.py`.
+- **Downtrend protection for spot trading**: Since Binance TH doesn't support shorting, the bot uses capital preservation strategy during downtrends. Hybrid detection algorithm (EMA alignment, ADX, price position, momentum) with configurable protection modes. See `docs/DOWNTREND_PROTECTION.md`.
 - **Trailing stops check ALL open positions** (not just active candidates) to prevent orphaned positions from being missed.
 - **Held positions are auto-injected** into the candidate list even if they dropped off the farm list, so the Strategist can still generate SELL signals.
 - **Judge reloads config from DB every evaluate()** call so dashboard changes take effect immediately.
@@ -71,7 +73,7 @@ WalletSync (job_wallet.py)   → syncs Binance wallet to DB for dashboard
 
 ### Configuration
 
-All config lives in the `bot_config` Supabase table as key-value pairs. Key settings: `TRADING_MODE` (PAPER/LIVE), `RSI_THRESHOLD`, `AI_CONF_THRESHOLD`, `POSITION_SIZE_PCT`, `MAX_OPEN_POSITIONS`, `TRAILING_STOP_ENABLED`, `TRAILING_STOP_USE_ATR`, `TRAILING_STOP_PCT`, `TRAILING_STOP_ATR_MULTIPLIER`, `MIN_PROFIT_TO_TRAIL_PCT`.
+All config lives in the `bot_config` Supabase table as key-value pairs. Key settings: `TRADING_MODE` (PAPER/LIVE), `RSI_THRESHOLD`, `AI_CONF_THRESHOLD`, `POSITION_SIZE_PCT`, `MAX_OPEN_POSITIONS`, `TRAILING_STOP_ENABLED`, `TRAILING_STOP_USE_ATR`, `TRAILING_STOP_PCT`, `TRAILING_STOP_ATR_MULTIPLIER`, `MIN_PROFIT_TO_TRAIL_PCT`, `ENABLE_DOWNTREND_PROTECTION`, `DOWNTREND_PROTECTION_MODE`, `DOWNTREND_AI_BOOST`, `DOWNTREND_SIZE_REDUCTION_PCT`, `ADX_TREND_THRESHOLD`.
 
 ### Database Tables
 
@@ -88,8 +90,12 @@ Core tables: `bot_config`, `assets`, `positions`, `trade_signals`, `simulation_p
 
 Required: `SUPABASE_URL`, `SUPABASE_KEY`, `GEMINI_API_KEY`, `BINANCE_API_KEY`, `BINANCE_SECRET`, `BINANCE_API_URL` (https://api.binance.th for TH). See `.env.example`.
 
-## Completed Features (2025-01-28)
+## Completed Features
 
+### 2025-01-29
+- **Downtrend Protection System**: Hybrid multi-indicator trend detection (EMA 200, ADX, price position, slope, DM) with 3 protection modes (STRICT/MODERATE/SELECTIVE). Capital preservation strategy for spot-only trading. See `docs/DOWNTREND_PROTECTION.md`
+
+### 2025-01-28
 - **P&L Display**: Implemented in history_page, dashboard_page, wallet_page, status_server
 - **ATR Trailing Stop UI**: Added USE_ATR toggle and ATR_MULTIPLIER input to config_page
 - **Simulation Page Fixes**: Fixed PnL % calculation, cached ticker fetches, added closed trades table
@@ -368,6 +374,8 @@ Exit Strategy Performance:
 ## Documentation
 
 - `docs/FUNCTIONAL_DOCUMENT.md` — Full function-level documentation of every module and calculation
+- `docs/DOWNTREND_PROTECTION.md` — Downtrend protection system design and implementation
+- `docs/PAPER_MONITORING_PHASE.md` — 7-day paper testing guide with tracking templates
 - `docs/ATR_TRAILING_STOP_CONFIG.md` — Trailing stop configuration guide
 - `docs/SECURITY.md` — Security practices and secret management
 - `docs/AUTHENTICATION_SETUP.md` — Dashboard auth setup

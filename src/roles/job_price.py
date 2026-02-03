@@ -368,7 +368,8 @@ class PriceSpy:
             # 2. EMA (Exponential Moving Average)
             df['ema_20'] = df.ta.ema(length=20)
             df['ema_50'] = df.ta.ema(length=50)
-            
+            df['ema_200'] = df.ta.ema(length=200)  # Long-term trend baseline
+
             # 3. MACD (Moving Average Convergence Divergence)
             # Returns a DataFrame with columns: MACD_12_26_9, MACDh_12_26_9 (hist), MACDs_12_26_9 (signal)
             macd = df.ta.macd(fast=12, slow=26, signal=9)
@@ -387,8 +388,32 @@ class PriceSpy:
                 df['bb_upper'] = bb['BBU_20_2.0']
                 df['bb_lower'] = bb['BBL_20_2.0']
                 df['sma_20'] = bb['BBM_20_2.0'] # Middleware is Simple Moving Average
-            
-            # 5. Fill NaN (backfill first to avoid dropping initial rows)
+
+            # 6. ADX (Average Directional Index) - Trend strength
+            adx_data = df.ta.adx(length=14)
+            if adx_data is not None:
+                df['adx'] = adx_data['ADX_14']
+                df['dmp'] = adx_data['DMP_14']  # Directional Movement Positive
+                df['dmn'] = adx_data['DMN_14']  # Directional Movement Negative
+
+            # 7. EMA 50 Slope (momentum of trend) - 5-period rate of change
+            df['ema_50_slope'] = df['ema_50'].pct_change(periods=5) * 100
+
+            # 8. Price Position Score (0-3: how many EMAs price is above)
+            def calc_price_position(close, ema_20, ema_50, ema_200):
+                score = 0
+                if close > ema_20: score += 1
+                if close > ema_50: score += 1
+                if close > ema_200: score += 1
+                return score
+
+            df['price_position_score'] = df.apply(
+                lambda row: calc_price_position(
+                    row['close'], row['ema_20'], row['ema_50'], row['ema_200']
+                ), axis=1
+            )
+
+            # 9. Fill NaN (backfill first to avoid dropping initial rows)
             df = df.bfill().ffill()
             
             return df
@@ -397,6 +422,116 @@ class PriceSpy:
             print(f"Indicator Calc Error (Pandas-TA): {e}")
             # Fallback not needed if library is installed, but return original df to prevent crash
             return df
+
+    def detect_market_trend(self, df: pd.DataFrame) -> dict:
+        """
+        Hybrid Trend Detection using EMA alignment, ADX, price position, and momentum.
+
+        Combines multiple indicators to classify market trend:
+        - EMA Alignment (structural trend)
+        - ADX (trend strength)
+        - Price Position (bullish/bearish structure)
+        - EMA Slope (momentum direction)
+        - Directional Movement (positive vs negative pressure)
+
+        Returns:
+            {
+                'trend': 'STRONG_UPTREND' | 'UPTREND' | 'NEUTRAL' | 'DOWNTREND' | 'STRONG_DOWNTREND',
+                'strength': float (0-100),
+                'confidence': float (0-100),
+                'signals': dict (breakdown of detection components)
+            }
+        """
+        if df is None or df.empty or len(df) < 200:
+            return {'trend': 'NEUTRAL', 'strength': 0, 'confidence': 0, 'signals': {}}
+
+        latest = df.iloc[-1]
+
+        # Extract indicators
+        ema_20 = latest.get('ema_20', 0)
+        ema_50 = latest.get('ema_50', 0)
+        ema_200 = latest.get('ema_200', 0)
+        close = latest.get('close', 0)
+        adx = latest.get('adx', 0)
+        dmp = latest.get('dmp', 0)
+        dmn = latest.get('dmn', 0)
+        ema_slope = latest.get('ema_50_slope', 0)
+        price_pos = latest.get('price_position_score', 0)
+
+        # Component checks
+        ema_aligned_bull = (ema_20 > ema_50 > ema_200)
+        ema_aligned_bear = (ema_20 < ema_50 < ema_200)
+        is_trending = adx > 25
+        is_strong_trend = adx > 40
+        dm_bullish = dmp > dmn
+
+        # Scoring system (-100 to +100)
+        trend_score = 0
+
+        # Price vs EMA200 (±30 points)
+        if close > ema_200:
+            trend_score += 30
+        elif close < ema_200:
+            trend_score -= 30
+
+        # EMA Alignment (±25 points)
+        if ema_aligned_bull:
+            trend_score += 25
+        elif ema_aligned_bear:
+            trend_score -= 25
+
+        # ADX Strength (±20 points)
+        if is_trending:
+            direction = 1 if dm_bullish else -1
+            strength_mult = min(adx / 50, 1.0)
+            trend_score += direction * 20 * strength_mult
+
+        # EMA Slope (±15 points)
+        if ema_slope > 0.5:
+            trend_score += 15
+        elif ema_slope < -0.5:
+            trend_score -= 15
+
+        # Price Position (±10 points)
+        trend_score += (price_pos - 1.5) * 6.67
+
+        # Normalize and classify
+        trend_score = max(-100, min(100, trend_score))
+
+        if trend_score >= 60:
+            trend = 'STRONG_UPTREND'
+        elif trend_score >= 20:
+            trend = 'UPTREND'
+        elif trend_score >= -20:
+            trend = 'NEUTRAL'
+        elif trend_score >= -60:
+            trend = 'DOWNTREND'
+        else:
+            trend = 'STRONG_DOWNTREND'
+
+        # Calculate confidence
+        confidence = 0
+        if ema_aligned_bull or ema_aligned_bear:
+            confidence += 40
+        if is_trending:
+            confidence += 30
+        if is_strong_trend:
+            confidence += 30
+        confidence = min(100, confidence)
+
+        return {
+            'trend': trend,
+            'strength': abs(trend_score),
+            'confidence': confidence,
+            'signals': {
+                'ema_aligned': 'BULL' if ema_aligned_bull else ('BEAR' if ema_aligned_bear else 'NONE'),
+                'adx': adx,
+                'price_position': price_pos,
+                'ema_slope': ema_slope,
+                'dm_direction': 'BULL' if dm_bullish else 'BEAR',
+                'price_vs_ema200': 'ABOVE' if close > ema_200 else 'BELOW'
+            }
+        }
 
 if __name__ == "__main__":
     # Test The Spy

@@ -131,6 +131,88 @@ def render_config_page(db):
             macd_val = str(get_cfg(db, "ENABLE_MACD_MOMENTUM", "false")).replace('"', '').lower() == 'true'
             new_macd = st.checkbox("✅ Momentum Veto (Bullish MACD)", value=macd_val, help="Reject BUY if MACD < Signal Line.")
 
+        st.markdown("#### 🛡️ Downtrend Protection")
+        st.caption("Protect capital during unfavorable market conditions")
+
+        dp1, dp2, dp3 = st.columns(3)
+
+        with dp1:
+            downtrend_enabled = str(get_cfg(db, "ENABLE_DOWNTREND_PROTECTION", "false")).replace('"', '').lower() == 'true'
+            new_downtrend_enabled = st.checkbox(
+                "Enable Downtrend Protection",
+                value=downtrend_enabled,
+                help="Activate market-wide trend analysis to adjust trading behavior"
+            )
+
+        with dp2:
+            current_mode = str(get_cfg(db, "DOWNTREND_PROTECTION_MODE", "MODERATE")).replace('"', '')
+            new_protection_mode = st.selectbox(
+                "Protection Mode",
+                ["STRICT", "MODERATE", "SELECTIVE"],
+                index=["STRICT", "MODERATE", "SELECTIVE"].index(current_mode) if current_mode in ["STRICT", "MODERATE", "SELECTIVE"] else 1,
+                help="STRICT: Block all BUYs in downtrends | MODERATE: Higher AI threshold + smaller positions | SELECTIVE: Only buy strong coins",
+                disabled=not new_downtrend_enabled
+            )
+
+        with dp3:
+            try:
+                current_boost = float(str(get_cfg(db, "DOWNTREND_AI_BOOST", 20)))
+            except:
+                current_boost = 20.0
+            new_ai_boost = st.number_input(
+                "Downtrend AI Boost (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=current_boost,
+                step=5.0,
+                help="Additional AI confidence required during downtrends (MODERATE mode)",
+                disabled=not new_downtrend_enabled
+            )
+
+        with st.expander("🔧 Advanced Downtrend Settings", expanded=False):
+            adv1, adv2 = st.columns(2)
+
+            with adv1:
+                try:
+                    size_reduction = float(str(get_cfg(db, "DOWNTREND_SIZE_REDUCTION_PCT", 30)))
+                except:
+                    size_reduction = 30.0
+                new_size_reduction = st.number_input(
+                    "Position Size Reduction (%)",
+                    min_value=0.0,
+                    max_value=70.0,
+                    value=size_reduction,
+                    step=5.0,
+                    help="Reduce position size by this % during moderate downtrends",
+                    disabled=not new_downtrend_enabled
+                )
+
+            with adv2:
+                try:
+                    adx_threshold = float(str(get_cfg(db, "ADX_TREND_THRESHOLD", 25)))
+                except:
+                    adx_threshold = 25.0
+                new_adx_threshold = st.number_input(
+                    "ADX Trend Threshold",
+                    min_value=15.0,
+                    max_value=40.0,
+                    value=adx_threshold,
+                    step=5.0,
+                    help="ADX above this = trending market (default: 25)",
+                    disabled=not new_downtrend_enabled
+                )
+
+        if new_downtrend_enabled:
+            st.info(f"""
+            **Mode: {new_protection_mode}** | Hybrid Detection: EMA Alignment + ADX ({new_adx_threshold}) + Price Position
+
+            {
+                "All BUYs blocked in downtrends" if new_protection_mode == "STRICT" else
+                f"Strong downtrends blocked. Moderate: +{new_ai_boost}% AI conf, {new_size_reduction}% smaller positions" if new_protection_mode == "MODERATE" else
+                "Only coins with relative strength (above EMA200) allowed in downtrends"
+            }
+            """)
+
         st.markdown("#### 📉 Trailing Stop Settings")
         ts1, ts2, ts3 = st.columns(3)
         with ts1:
@@ -209,6 +291,11 @@ def render_config_page(db):
                     {"key": "TIMEFRAME", "value": new_tf},
                     {"key": "ENABLE_EMA_TREND", "value": str(new_trend).lower()},
                     {"key": "ENABLE_MACD_MOMENTUM", "value": str(new_macd).lower()},
+                    {"key": "ENABLE_DOWNTREND_PROTECTION", "value": str(new_downtrend_enabled).lower()},
+                    {"key": "DOWNTREND_PROTECTION_MODE", "value": new_protection_mode},
+                    {"key": "DOWNTREND_AI_BOOST", "value": str(new_ai_boost)},
+                    {"key": "DOWNTREND_SIZE_REDUCTION_PCT", "value": str(new_size_reduction)},
+                    {"key": "ADX_TREND_THRESHOLD", "value": str(new_adx_threshold)},
                     {"key": "TRAILING_STOP_ENABLED", "value": str(new_trail_enabled).lower()},
                     {"key": "TRAILING_STOP_PCT", "value": str(new_trail_pct)},
                     {"key": "MIN_PROFIT_TO_TRAIL_PCT", "value": str(new_min_prof)},
