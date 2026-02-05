@@ -326,10 +326,10 @@ class StatusHandler(BaseHTTPRequestHandler):
             role = log.get('role', 'N/A')
             level = log.get('level', 'INFO')
             live_logs_html += (
-                f\"<div class='log-line'>[{time_display}] \"
-                f\"<span style='color:#00aaff'>{role}</span> \"
-                f\"<span style='color:{level_color}'>[{level}]</span> \"
-                f\"{msg}</div>\"
+                f"<div class='log-line'>[{time_display}] "
+                f"<span style='color:#00aaff'>{role}</span> "
+                f"<span style='color:{level_color}'>[{level}]</span> "
+                f"{msg}</div>"
             )
         
         # API status HTML
