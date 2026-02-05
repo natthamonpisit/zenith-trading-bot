@@ -32,12 +32,13 @@ class StatusHandler(BaseHTTPRequestHandler):
             bot_status = self._get_bot_status(db)
             heartbeat = self._get_heartbeat(db)
             api_status = self._check_api_connections(db)
-            recent_activity = self._get_recent_activity(db)
+            recent_activity = self._get_recent_activity(db, limit=5)
+            live_logs = self._get_recent_activity(db, limit=50)
             pnl_summary = self._get_pnl_summary(db)
             uptime = self._get_uptime(db)
 
             # Generate HTML
-            html = self._generate_html(bot_status, heartbeat, api_status, recent_activity, pnl_summary, uptime)
+            html = self._generate_html(bot_status, heartbeat, api_status, recent_activity, live_logs, pnl_summary, uptime)
             
             # Send response
             self.send_response(200)
@@ -67,8 +68,8 @@ class StatusHandler(BaseHTTPRequestHandler):
             result = db.table("bot_config").select("key, value").execute()
             config = {item['key']: item['value'] for item in result.data}
             
-            status = config.get('BOT_STATUS', 'UNKNOWN')
-            mode = config.get('MODE', 'UNKNOWN')
+            status = str(config.get('BOT_STATUS', 'UNKNOWN')).replace('"', '').strip()
+            mode = str(config.get('MODE', 'UNKNOWN')).replace('"', '').strip()
             
             return {
                 'status': status,
@@ -191,14 +192,14 @@ class StatusHandler(BaseHTTPRequestHandler):
         
         return apis
     
-    def _get_recent_activity(self, db):
+    def _get_recent_activity(self, db, limit=5):
         """Get recent bot activity"""
         try:
             # Get recent logs
             logs = db.table("system_logs")\
                 .select("role, message, level, created_at")\
                 .order("created_at", desc=True)\
-                .limit(5)\
+                .limit(limit)\
                 .execute()
 
             return logs.data if logs.data else []
@@ -237,7 +238,7 @@ class StatusHandler(BaseHTTPRequestHandler):
         except:
             return {'live': {'total_pnl': 0, 'win_rate': 0, 'trades': 0}, 'sim': {'total_pnl': 0, 'win_rate': 0, 'trades': 0}}
     
-    def _generate_html(self, bot_status, heartbeat, api_status, recent_activity, pnl_summary=None, uptime=None):
+    def _generate_html(self, bot_status, heartbeat, api_status, recent_activity, live_logs, pnl_summary=None, uptime=None):
         """Generate status HTML"""
 
         # Status color
@@ -297,6 +298,39 @@ class StatusHandler(BaseHTTPRequestHandler):
                 <td style="color: {level_color};">{log.get('message', 'N/A')[:100]}</td>
             </tr>
             """
+
+        # Live logs HTML (last 50)
+        live_logs_html = ""
+        for log in live_logs:
+            level_color = {
+                'SUCCESS': '#00ff00',
+                'ERROR': '#ff0000',
+                'WARNING': '#ffaa00',
+                'INFO': '#00aaff'
+            }.get(log.get('level', 'INFO'), '#ffffff')
+
+            # Convert timestamp to Thailand time
+            try:
+                created_at_str = log.get('created_at', 'N/A')
+                if created_at_str != 'N/A':
+                    utc_time = datetime.strptime(created_at_str[:19], '%Y-%m-%dT%H:%M:%S')
+                    utc_time = pytz.UTC.localize(utc_time)
+                    thailand_time = utc_time.astimezone(THAILAND_TZ)
+                    time_display = thailand_time.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    time_display = 'N/A'
+            except:
+                time_display = created_at_str[:19]
+
+            msg = log.get('message', 'N/A')
+            role = log.get('role', 'N/A')
+            level = log.get('level', 'INFO')
+            live_logs_html += (
+                f\"<div class='log-line'>[{time_display}] \"
+                f\"<span style='color:#00aaff'>{role}</span> \"
+                f\"<span style='color:{level_color}'>[{level}]</span> \"
+                f\"{msg}</div>\"
+            )
         
         # API status HTML
         api_html = ""
@@ -365,6 +399,18 @@ class StatusHandler(BaseHTTPRequestHandler):
                     color: #666;
                     font-size: 0.8em;
                 }}
+                .log-panel {{
+                    background: #0f0f0f;
+                    border: 1px solid #222;
+                    padding: 10px;
+                    height: 320px;
+                    overflow-y: auto;
+                    font-size: 0.9em;
+                }}
+                .log-line {{
+                    padding: 2px 0;
+                    border-bottom: 1px dotted #222;
+                }}
             </style>
         </head>
         <body>
@@ -427,6 +473,11 @@ class StatusHandler(BaseHTTPRequestHandler):
                         {activity_html}
                     </tbody>
                 </table>
+
+                <h2>🧾 Live Logs (Last 50)</h2>
+                <div class="log-panel">
+                    {live_logs_html}
+                </div>
                 
                 <div class="footer">
                     Auto-refresh every 10 seconds | Last updated: {datetime.now(THAILAND_TZ).strftime('%Y-%m-%d %H:%M:%S')} (Thailand Time)

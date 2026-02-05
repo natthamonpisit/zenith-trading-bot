@@ -89,7 +89,8 @@ def process_pair(pair, timeframe, intent="ENTRY"):
         print(f"--- 1. SPY A: Fetching Price for {pair} ({timeframe}) [Intent: {intent}] ---")
         # log_activity("Spy", f"🕵️ Scanning {pair} ({timeframe}) market...") # Reduce log noise
         
-        df = price_spy.fetch_ohlcv(pair, timeframe)
+        # Ensure enough candles for EMA200/downtrend detection
+        df = price_spy.fetch_ohlcv(pair, timeframe, limit=250)
         if df is None: 
             print(f"❌ Data Fetch Failed for {pair}")
             return

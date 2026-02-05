@@ -117,8 +117,6 @@ class Strategist:
         
         return genai.GenerativeModel('gemini-1.5-flash')
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     def analyze_market(self, snapshot_id, asset_symbol, tech_data, intent="ENTRY"):
         """
         Sends market data to Gemini and expects a strict JSON response.
@@ -177,19 +175,9 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
             "recommendation": {valid_actions}
         }}
         """
-        
-        
+
         try:
-            # Call Gemini API with circuit breaker protection
-            response = self.gemini_breaker.call_function(
-                lambda: self.model.generate_content(prompt, request_options={"timeout": 30})
-            )
-            
-            # Cleanup potential markdown formatting
-            text = response.text.replace('```json', '').replace('```', '').strip()
-            analysis = json.loads(text)
-            return analysis
-            
+            return self._analyze_market(prompt)
         except Exception as e:
             print(f"⚠️ [Gemini AI Error] analyze_market failed: {e}")
             # Fallback: Return WAIT recommendation (safe default)
@@ -199,6 +187,16 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
                 'reasoning': f'AI analysis unavailable: {str(e)}',
                 'recommendation': 'WAIT'
             }
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
+    def _analyze_market(self, prompt: str):
+        """Retryable Gemini call + JSON parsing."""
+        response = self.gemini_breaker.call_function(
+            lambda: self.model.generate_content(prompt, request_options={"timeout": 30})
+        )
+        # Cleanup potential markdown formatting
+        text = response.text.replace('```json', '').replace('```', '').strip()
+        return json.loads(text)
             
     # Note: The signal construction actually happens in THE JUDGE or whoever calls this.
     # Strategist just returns recommendation.
@@ -620,14 +618,14 @@ class Judge:
             if ai_rec == 'BUY' and macd < signal:
                 return TradeDecision(decision="REJECTED", size=0, reason=f"Momentum Veto: MACD {macd:.4f} < Signal {signal:.4f}")
 
-        # Rule: AI must be confident.
+        # Rule: AI must be confident (BUY only; SELL should not be blocked by confidence)
         min_conf = float(self.config.get('AI_CONF_THRESHOLD', 60))
-        if ai_conf < min_conf:
-             return TradeDecision(
-                 decision="REJECTED", 
-                 size=0, 
-                 reason=f"AI Uncertainty: {ai_conf}% < {min_conf}%"
-             )
+        if ai_rec != 'SELL' and ai_conf < min_conf:
+            return TradeDecision(
+                decision="REJECTED",
+                size=0,
+                reason=f"AI Uncertainty: {ai_conf}% < {min_conf}%"
+            )
 
         # Rule: Explicitly REJECT 'WAIT' signals
         if ai_rec in ['WAIT', 'HOLD']:

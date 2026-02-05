@@ -136,11 +136,17 @@ class SniperExecutor:
             else:
                 # -- LIVE MODE --
                 # 1. Place Market Order
-                # For Binance/Binance TH: Use quoteOrderQty for BUY to spend USDT amount
                 if side.upper() == 'BUY':
                     print(f"Sniper: Placing Market BUY for {amount} USDT...")
-                    order = self.exchange.create_order(symbol, 'market', 'buy', amount, None, {
-                        'quoteOrderQty': self.exchange.cost_to_precision(symbol, amount),
+                    # Convert quote amount (USDT) -> base amount using current price
+                    ticker = self.exchange.fetch_ticker(symbol)
+                    last_price = ticker.get('last') or ticker.get('close')
+                    if not last_price or float(last_price) <= 0:
+                        raise Exception(f"Cannot determine market price for {symbol} to size BUY")
+                    base_amount = float(amount) / float(last_price)
+                    if hasattr(self.exchange, 'amount_to_precision'):
+                        base_amount = float(self.exchange.amount_to_precision(symbol, base_amount))
+                    order = self.exchange.create_order(symbol, 'market', 'buy', base_amount, None, {
                         'type': 'spot'
                     })
                 elif side.upper() == 'SELL':
@@ -241,4 +247,3 @@ class SniperExecutor:
             print(f"Sniper Error: {e}")
             self.db.table("trade_signals").update({"status": "FAILED", "judge_reason": str(e)}).eq("id", signal['id']).execute()
             return False
-
