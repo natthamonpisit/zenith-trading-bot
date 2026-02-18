@@ -1,0 +1,276 @@
+:root {
+  --bg: #f4f6fb;
+  --panel: #ffffff;
+  --line: #d8dce7;
+  --text: #101828;
+  --muted: #475467;
+  --good: #0f9d58;
+  --bad: #d92d20;
+  --accent: #0f4c81;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(1000px 360px at -10% -10%, #dce8ff, transparent 75%),
+    radial-gradient(720px 300px at 120% -20%, #d7f8e5, transparent 60%),
+    var(--bg);
+}
+
+.layout {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.topbar {
+  background: linear-gradient(90deg, #0b2d5b, #0f4c81);
+  color: #e9f2ff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.topbar p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: #c9ddff;
+}
+
+.topbar-actions button,
+.tabbar button,
+.toolbar select,
+.toolbar input {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+.topbar-actions button {
+  background: #f9fbff;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.toolbar label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toolbar-note {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tabbar button.active {
+  background: #103e6a;
+  color: #fff;
+  border-color: #103e6a;
+}
+
+.content {
+  display: grid;
+  gap: 12px;
+}
+
+.two-panels {
+  grid-template-columns: 1fr 1fr;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.panel-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.kpi-card {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  padding: 10px;
+  background: #fcfdff;
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.tone-good .kpi-value {
+  color: var(--good);
+}
+
+.tone-bad .kpi-value {
+  color: var(--bad);
+}
+
+.table-wrap {
+  width: 100%;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 8px;
+  border-bottom: 1px solid #eaedf3;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  font-size: 12px;
+  color: var(--muted);
+  background: #fafbfe;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", "Menlo", monospace;
+}
+
+.good {
+  color: var(--good);
+}
+
+.bad {
+  color: var(--bad);
+}
+
+.error-banner {
+  background: #fee4e2;
+  color: #b42318;
+  border: 1px solid #fecdca;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.subtle-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.page-loading {
+  text-align: center;
+  padding: 10px;
+}
+
+.chart-shell {
+  width: 100%;
+  min-height: 430px;
+  border: 1px solid #111827;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.tiny-metadata {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ws-connecting {
+  color: #b54708;
+}
+
+.ws-connected {
+  color: var(--good);
+}
+
+.ws-disconnected {
+  color: var(--bad);
+}
+
+@media (max-width: 1200px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .two-panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .toolbar-note {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .topbar {
+    display: grid;
+    gap: 10px;
+  }
+}

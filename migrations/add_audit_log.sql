@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     key TEXT,
     old_value TEXT,
     new_value TEXT,
-    user TEXT DEFAULT 'system',
+    "user" TEXT DEFAULT 'system',
     
     -- Balance change fields
     balance_before NUMERIC,

@@ -1,467 +1,822 @@
-import React, { useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { Folder, FileCode, FileText, Database, Shield, Brain, Activity, Terminal, LayoutDashboard, ChevronRight, ChevronDown, Copy, Check } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  ColorType,
+  createChart,
+  type CandlestickData,
+  type IChartApi,
+  type ISeriesApi,
+  type Time,
+} from "lightweight-charts";
+import "./index.css";
 
-// --- MOCK FILE CONTENT FOR VIEWING PURPOSES ---
-const FILES = {
-  "README.md": `# 🤖 AI-Quantamental Trading Bot (Zenith Architecture)
+type TabId = "overview" | "candidates" | "signals" | "positions" | "chart";
 
-## Philosophy
-"Logic protects Capital. AI provides Opportunity. Code provides Speed."
-
-## Architecture
-1. **The Head Hunter (Screener):** Fundamental Analysis (ROE, PEG).
-2. **The Radar (Scout):** Crypto Volatility Scanner.
-3. **The Spy (Data):** Technicals & News.
-4. **The Strategist (AI):** Gemini Reasoning Engine.
-5. **The Judge (Risk):** Logic-based Guardrail.
-6. **The Sniper (Execution):** Order Management.
-
-## Setup
-1. Fill in \`.env\`
-2. Run \`setup_database.py\` in Supabase SQL Editor.
-3. \`docker-compose up\``,
-
-  "requirements.txt": `python-dotenv>=1.0.0
-pandas>=2.0.0
-numpy>=1.24.0
-pydantic>=2.0.0
-tenacity>=8.2.0
-supabase>=2.0.0
-ccxt>=4.0.0
-yfinance>=0.2.0
-pandas_ta>=0.3.14
-google-generativeai>=0.3.0
-beautifulsoup4>=4.12.0
-feedparser>=6.0.10
-aiohttp>=3.8.0
-apscheduler>=3.10.0
-streamlit>=1.28.0
-plotly>=5.18.0`,
-
-  ".env.example": `SUPABASE_URL="https://your-project.supabase.co"
-SUPABASE_KEY="your-service-role-key"
-GEMINI_API_KEY="your-gemini-key"
-BINANCE_API_KEY="your-binance-key"
-BINANCE_SECRET="your-binance-secret"
-ENV="development"`,
-
-  "setup_database.py": `"""
-[ZENITH ARCHITECT]
-Run this SQL script in Supabase SQL Editor to initialize the schema.
-"""
-
-SQL_SCHEMA = """
--- Enable UUID
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- 1. Assets
-CREATE TABLE IF NOT EXISTS assets (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    symbol TEXT NOT NULL UNIQUE,
-    market_type TEXT CHECK (market_type IN ('spot', 'futures')),
-    status TEXT DEFAULT 'active',
-    fundamentals JSONB,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 2. Market Snapshots
-CREATE TABLE IF NOT EXISTS market_snapshots (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    asset_id UUID REFERENCES assets(id),
-    timeframe TEXT DEFAULT '1h',
-    close_price NUMERIC,
-    rsi NUMERIC,
-    macd NUMERIC,
-    atr NUMERIC,
-    extra_indicators JSONB,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 3. AI Analysis
-CREATE TABLE IF NOT EXISTS ai_analysis (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    snapshot_id UUID REFERENCES market_snapshots(id),
-    sentiment_score NUMERIC,
-    ai_confidence NUMERIC,
-    reasoning TEXT,
-    model_version TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 4. Trade Signals
-CREATE TABLE IF NOT EXISTS trade_signals (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    asset_id UUID REFERENCES assets(id),
-    signal_type TEXT,
-    entry_target NUMERIC,
-    stop_loss NUMERIC,
-    take_profit NUMERIC,
-    status TEXT DEFAULT 'pending',
-    judge_reason TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 5. Positions
-CREATE TABLE IF NOT EXISTS positions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    asset_id UUID REFERENCES assets(id),
-    side TEXT,
-    entry_avg NUMERIC,
-    quantity NUMERIC,
-    unrealized_pnl NUMERIC,
-    is_open BOOLEAN DEFAULT TRUE
-);
-
--- 6. Bot Config
-CREATE TABLE IF NOT EXISTS bot_config (
-    key TEXT PRIMARY KEY,
-    value JSONB NOT NULL,
-    description TEXT
-);
-"""
-
-print(SQL_SCHEMA)`,
-
-  "src/database.py": `import os
-from supabase import create_client, Client
-from dotenv import load_dotenv
-
-load_dotenv()
-
-class Database:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            url = os.environ.get("SUPABASE_URL")
-            key = os.environ.get("SUPABASE_KEY")
-            if not url or not key:
-                raise ValueError("Missing Supabase Credentials")
-            cls._instance = create_client(url, key)
-        return cls._instance
-
-def get_db() -> Client:
-    return Database()`,
-
-  "src/roles/job_ai_analyst.py": `import google.generativeai as genai
-import os
-import json
-from tenacity import retry, stop_after_attempt, wait_fixed
-from src.database import get_db
-
-class Strategist:
-    """
-    The Strategist (AI Analyst)
-    Role: Analyze technical data and news to provide a sentiment score and reasoning.
-    """
-    def __init__(self):
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        self.db = get_db()
-
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    def analyze_market(self, snapshot_id, asset_symbol, tech_data):
-        prompt = f"""
-        Role: Senior Crypto Trader (Zenith Persona).
-        Task: Analyze {asset_symbol}.
-        Data: {json.dumps(tech_data)}
-        
-        Output JSON only:
-        {{
-            "sentiment_score": (float -1.0 to 1.0),
-            "confidence": (int 0-100),
-            "reasoning": "Concise logic.",
-            "recommendation": "BUY/SELL/WAIT"
-        }}
-        """
-        
-        try:
-            response = self.model.generate_content(prompt)
-            text = response.text.replace('\\\`\\\`\\\`json', '').replace('\\\`\\\`\\\`', '')
-            analysis = json.loads(text)
-            return analysis
-        except Exception as e:
-            print(f"Strategist Error: {e}")
-            return None`,
-
-  "src/roles/job_judge.py": `from pydantic import BaseModel, Field
-from src.database import get_db
-
-class TradeDecision(BaseModel):
-    decision: str = Field(pattern="^(APPROVED|REJECTED)$")
-    size: float
-    reason: str
-
-class Judge:
-    """
-    The Judge (Risk Manager)
-    Role: The Guardrail. Final authority on all trades.
-    """
-    def __init__(self):
-        self.db = get_db()
-        self.config = self._load_config()
-
-    def _load_config(self):
-        data = self.db.table("bot_config").select("*").execute().data
-        return {item['key']: item['value'] for item in data}
-
-    def evaluate(self, ai_data, tech_data, portfolio_balance):
-        rsi = tech_data.get('rsi')
-        ai_conf = ai_data.get('confidence')
-        ai_rec = ai_data.get('recommendation')
-
-        # Rule 1: Guardrails
-        rsi_limit = float(self.config.get('RSI_OVERBOUGHT', 70))
-        if rsi > rsi_limit and ai_rec == 'BUY':
-            return TradeDecision(decision="REJECTED", size=0, reason=f"RSI {rsi} > {rsi_limit}")
-
-        # Rule 2: AI Confidence
-        min_conf = float(self.config.get('AI_MIN_CONFIDENCE', 75))
-        if ai_conf < min_conf:
-            return TradeDecision(decision="REJECTED", size=0, reason=f"Confidence {ai_conf}% < {min_conf}%")
-
-        # Rule 3: Position Sizing (Spot)
-        # Allocate 5% of portfolio per trade
-        size = portfolio_balance * 0.05 
-        
-        return TradeDecision(
-            decision="APPROVED",
-            size=size,
-            reason=f"Clean Signal. AI Conf: {ai_conf}%"
-        )`,
-
-  "dashboard/app.py": `import streamlit as st
-import pandas as pd
-from src.database import get_db
-
-st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
-db = get_db()
-
-st.title("🤖 Zenith AI-Quantamental Dashboard")
-
-# --- SIDEBAR ---
-st.sidebar.header("Control Center")
-if st.sidebar.button("🚨 EMERGENCY STOP"):
-    db.table("bot_config").upsert({"key": "BOT_STATUS", "value": "STOPPED"}).execute()
-    st.sidebar.error("BOT STOPPED!")
-
-# --- COCKPIT ---
-st.subheader("📊 Portfolio Overview")
-col1, col2, col3 = st.columns(3)
-col1.metric("Total Equity", "$12,450", "+2.4%")
-col2.metric("Active Positions", "3")
-col3.metric("Win Rate (24h)", "65%")
-
-# --- POSITIONS ---
-st.subheader("⚡ Active Positions")
-positions = db.table("positions").select("*, assets(symbol)").eq("is_open", True).execute()
-if positions.data:
-    df = pd.DataFrame(positions.data)
-    df['symbol'] = df['assets'].apply(lambda x: x['symbol'])
-    st.dataframe(df[['symbol', 'side', 'entry_avg', 'unrealized_pnl', 'quantity']])
-else:
-    st.info("No active positions. The Sniper is waiting.")
-
-# --- AUDIT LOGS ---
-st.subheader("🕵️ Reasoning Audit")
-logs = db.table("trade_signals").select("*, assets(symbol), ai_analysis(reasoning, ai_confidence)").order("created_at", desc=True).limit(5).execute()
-
-for trade in logs.data or []:
-    with st.expander(f"{trade['signal_type']} {trade['assets']['symbol']} | Judge: {trade['status']}"):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**The Judge:**")
-            st.warning(trade['judge_reason'])
-        with c2:
-            st.markdown(f"**The Strategist ({trade['ai_analysis']['ai_confidence']}%)**")
-            st.info(trade['ai_analysis']['reasoning'])
-`
+type ApiError = {
+  code: string;
+  message: string;
+  retryable?: boolean;
+  details?: Record<string, unknown>;
 };
 
-// --- UI COMPONENTS ---
+type ApiEnvelope<T> = {
+  success: boolean;
+  data: T;
+  error: ApiError | null;
+  meta: {
+    request_id: string;
+    ts: string;
+    version: string;
+  };
+};
 
-interface FileTreeItemProps {
-  name: string;
-  type: string;
-  depth?: number;
-  isOpen?: boolean;
-  onToggle?: () => void;
-  isSelected?: boolean;
-  onSelect?: () => void;
+type SummaryData = {
+  equity: number;
+  daily_pnl: number;
+  drawdown_pct: number;
+  open_positions: number;
+  win_rate: number;
+  bot_status: string;
+};
+
+type CandidateData = {
+  symbol: string;
+  screener_rank: number;
+  liquidity_score: number;
+  tradable: boolean;
+  reject_reason: string | null;
+};
+
+type SignalData = {
+  id: string;
+  symbol: string;
+  signal_type: "BUY" | "SELL" | "WAIT" | "HOLD";
+  confidence: number;
+  status: string;
+  reason_codes: string[];
+};
+
+type PositionData = {
+  id: string;
+  symbol: string;
+  side: string;
+  entry_avg: number;
+  quantity: number;
+  leverage: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  is_open: boolean;
+  exit_reason: string | null;
+  created_at: string | null;
+  opened_at: string | null;
+  closed_at: string | null;
+};
+
+type OrderData = {
+  id: string;
+  signal_id: string | null;
+  symbol: string;
+  signal_type: string;
+  exchange_order_id: string | null;
+  price_filled: number;
+  quantity: number;
+  fee: number;
+  status: string;
+  slippage_bps: number | null;
+  created_at: string | null;
+};
+
+type EventData = {
+  id: string;
+  level: string;
+  role: string;
+  message: string;
+  created_at: string;
+};
+
+type KlineCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+type KlineData = {
+  symbol: string;
+  tf: string;
+  candles: KlineCandle[];
+};
+
+type PollResult<T> = {
+  data: T | null;
+  loading: boolean;
+  syncing: boolean;
+  error: string | null;
+  refresh: () => void;
+  lastUpdated: number | null;
+};
+
+const TAB_ITEMS: Array<{ id: TabId; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "candidates", label: "Candidates" },
+  { id: "signals", label: "Signals" },
+  { id: "positions", label: "Positions" },
+  { id: "chart", label: "Chart" },
+];
+
+const DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"];
+const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL?.toString().trim() ||
+  (typeof window !== "undefined" && window.location.port === "3000"
+    ? "http://localhost:8000"
+    : typeof window !== "undefined"
+      ? window.location.origin
+      : "http://localhost:8000");
+
+const API_KEY = import.meta.env.VITE_API_KEY?.toString().trim() || "";
+
+function normalizeTopicSymbol(symbol: string): string {
+  return symbol.replace("/", "").toUpperCase();
 }
 
-const FileTreeItem = ({ 
-  name, 
-  type, 
-  depth = 0, 
-  isOpen = false, 
-  onToggle = () => {}, 
-  isSelected = false, 
-  onSelect = () => {} 
-}: FileTreeItemProps) => {
-  const Icon = type === 'folder' ? Folder : (name.endsWith('.py') ? FileCode : FileText);
-  
-  return (
-    <div 
-      className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-800 transition-colors ${isSelected ? 'bg-gray-800 text-blue-400' : 'text-gray-300'}`}
-      style={{ paddingLeft: `${depth * 1.25 + 0.5}rem` }}
-      onClick={() => type === 'folder' ? onToggle() : onSelect()}
-    >
-      {type === 'folder' && (
-        <span className="mr-1">
-          {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </span>
-      )}
-      <Icon size={16} className={`mr-2 ${type === 'folder' ? 'text-yellow-500' : 'text-blue-400'}`} />
-      <span className="text-sm font-medium">{name}</span>
-    </div>
-  );
-};
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
 
-const FileViewer = ({ filename, content }) => {
-  const [copied, setCopied] = useState(false);
+function formatMoney(value: number): string {
+  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+function formatPct(value: number): string {
+  return `${value.toFixed(2)}%`;
+}
 
-  return (
-    <div className="flex flex-col h-full bg-gray-900 text-gray-200">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-900">
-        <div className="flex items-center space-x-2">
-          <FileCode size={18} className="text-blue-400" />
-          <span className="font-mono text-sm font-bold text-gray-100">{filename}</span>
-        </div>
-        <button 
-          onClick={handleCopy}
-          className="flex items-center space-x-2 px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-xs transition-colors border border-gray-700"
-        >
-          {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-          <span>{copied ? "Copied" : "Copy Code"}</span>
-        </button>
-      </div>
-      <div className="flex-1 overflow-auto p-4 font-mono text-sm leading-relaxed custom-scrollbar">
-        <pre className="text-gray-300">
-          <code>{content}</code>
-        </pre>
-      </div>
-    </div>
-  );
-};
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
 
-const App = () => {
-  const [selectedFile, setSelectedFile] = useState("README.md");
-  const [foldersOpen, setFoldersOpen] = useState({ "src": true, "src/roles": true, "dashboard": true });
+async function apiGet<T>(
+  path: string,
+  params?: Record<string, string | number | boolean | null | undefined>,
+): Promise<T> {
+  const url = new URL(path, API_BASE_URL);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
 
-  const toggleFolder = (folder) => {
-    setFoldersOpen(prev => ({ ...prev, [folder]: !prev[folder] }));
-  };
+  const headers: Record<string, string> = {};
+  if (API_KEY) headers["X-API-Key"] = API_KEY;
 
-  const fileStructure = [
-    { name: ".env.example", type: "file" },
-    { name: "requirements.txt", type: "file" },
-    { name: "README.md", type: "file" },
-    { name: "setup_database.py", type: "file" },
-    { name: "dashboard", type: "folder", children: [
-        { name: "app.py", type: "file" }
-      ] 
-    },
-    { name: "src", type: "folder", children: [
-        { name: "database.py", type: "file" },
-        { name: "roles", type: "folder", children: [
-            { name: "job_ai_analyst.py", type: "file" },
-            { name: "job_judge.py", type: "file" },
-          ]
-        }
-      ]
-    }
-  ];
+  const response = await fetch(url.toString(), { headers });
+  const body = (await response.json()) as ApiEnvelope<T>;
+  if (!response.ok || !body.success) {
+    const errorText = body.error?.message || `HTTP ${response.status}`;
+    throw new Error(errorText);
+  }
+  return body.data;
+}
 
-  const getFileContent = (path) => {
-    // Helper to map UI path to FILES object keys
-    if (FILES[path]) return FILES[path];
-    
-    // Check nested paths
-    const parts = path.split('/');
-    const filename = parts[parts.length - 1];
-    if (FILES[filename]) return FILES[filename]; // Fallback for simple demo
-    
-    // Explicit mapping for nested in demo
-    if (path === "dashboard/app.py") return FILES["dashboard/app.py"];
-    if (path === "src/database.py") return FILES["src/database.py"];
-    if (path === "src/roles/job_ai_analyst.py") return FILES["src/roles/job_ai_analyst.py"];
-    if (path === "src/roles/job_judge.py") return FILES["src/roles/job_judge.py"];
+function usePollingResource<T>(fetcher: () => Promise<T>, intervalMs: number): PollResult<T> {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
-    return "# Content not loaded in this preview.";
-  };
+  const hasDataRef = useRef(false);
+  const requestSeqRef = useRef(0);
 
-  const renderTree = (items, basePath = "") => {
-    return items.map((item) => {
-      const fullPath = basePath ? `${basePath}/${item.name}` : item.name;
-      if (item.type === 'folder') {
-        return (
-          <div key={fullPath}>
-            <FileTreeItem 
-              name={item.name} 
-              type="folder" 
-              depth={basePath.split('/').filter(Boolean).length}
-              isOpen={foldersOpen[fullPath]} 
-              onToggle={() => toggleFolder(fullPath)} 
-            />
-            {foldersOpen[fullPath] && renderTree(item.children, fullPath)}
-          </div>
-        );
+  const runFetch = useCallback(
+    async (background: boolean) => {
+      const seq = ++requestSeqRef.current;
+      if (background && hasDataRef.current) {
+        setSyncing(true);
+      } else {
+        setLoading(true);
       }
-      return (
-        <FileTreeItem 
-          key={fullPath}
-          name={item.name} 
-          type="file" 
-          depth={basePath.split('/').filter(Boolean).length}
-          isSelected={selectedFile === fullPath}
-          onSelect={() => setSelectedFile(fullPath)}
-        />
-      );
-    });
-  };
 
+      try {
+        const nextData = await fetcher();
+        if (seq !== requestSeqRef.current) return;
+        setData(nextData);
+        hasDataRef.current = true;
+        setError(null);
+        setLastUpdated(Date.now());
+      } catch (err) {
+        if (seq !== requestSeqRef.current) return;
+        setError(toErrorMessage(err));
+      } finally {
+        if (seq !== requestSeqRef.current) return;
+        setLoading(false);
+        setSyncing(false);
+      }
+    },
+    [fetcher],
+  );
+
+  useEffect(() => {
+    hasDataRef.current = false;
+    setLoading(true);
+    setSyncing(false);
+    setError(null);
+    runFetch(false);
+    const timer = window.setInterval(() => {
+      runFetch(true);
+    }, intervalMs);
+    return () => {
+      requestSeqRef.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [intervalMs, runFetch]);
+
+  const refresh = useCallback(() => {
+    runFetch(Boolean(hasDataRef.current));
+  }, [runFetch]);
+
+  return { data, loading, syncing, error, refresh, lastUpdated };
+}
+
+function wsUrlForTopic(topic: string): string {
+  const base = new URL(API_BASE_URL);
+  const protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = new URL(`${protocol}//${base.host}/ws`);
+  wsUrl.searchParams.set("topic", topic);
+  if (API_KEY) wsUrl.searchParams.set("token", API_KEY);
+  return wsUrl.toString();
+}
+
+function useTopicWebSocket(
+  topic: string,
+  onEvent: (payload: Record<string, unknown>, eventType: string) => void,
+  onReconnect?: () => void,
+): { status: "connecting" | "connected" | "disconnected" } {
+  const [status, setStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
+  const onEventRef = useRef(onEvent);
+  const onReconnectRef = useRef(onReconnect);
+
+  onEventRef.current = onEvent;
+  onReconnectRef.current = onReconnect;
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let retryTimer: number | null = null;
+    let closedByClient = false;
+    let attempt = 0;
+
+    const connect = () => {
+      setStatus("connecting");
+      ws = new WebSocket(wsUrlForTopic(topic));
+
+      ws.onopen = () => {
+        setStatus("connected");
+        if (attempt > 0 && onReconnectRef.current) {
+          onReconnectRef.current();
+        }
+        attempt = 0;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as {
+            event_type?: string;
+            payload?: Record<string, unknown>;
+          };
+          if (parsed.event_type && parsed.payload) {
+            onEventRef.current(parsed.payload, parsed.event_type);
+          }
+        } catch {
+          // ignore malformed payload
+        }
+      };
+
+      ws.onclose = () => {
+        if (closedByClient) return;
+        setStatus("disconnected");
+        const baseDelay = Math.min(30000, 1000 * 2 ** attempt);
+        const jitter = Math.floor(Math.random() * 450);
+        const waitMs = baseDelay + jitter;
+        attempt += 1;
+        retryTimer = window.setTimeout(connect, waitMs);
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      closedByClient = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      ws?.close();
+    };
+  }, [topic]);
+
+  return { status };
+}
+
+function SummaryCard({
+  title,
+  value,
+  tone = "neutral",
+}: {
+  title: string;
+  value: string;
+  tone?: "good" | "bad" | "neutral";
+}) {
   return (
-    <div className="flex h-screen bg-gray-950 text-gray-200 overflow-hidden font-sans selection:bg-blue-500/30">
-      {/* Sidebar / Explorer */}
-      <div className="w-72 border-r border-gray-800 flex flex-col bg-gray-950">
-        <div className="p-4 border-b border-gray-800 flex items-center space-x-2 bg-gray-900/50">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-            <Shield size={18} className="text-white" />
-          </div>
-          <div>
-            <h2 className="font-bold text-gray-100 tracking-tight">ZENITH BOT</h2>
-            <p className="text-xs text-blue-400 font-medium">Architecture Blueprint</p>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Project Files</div>
-          {renderTree(fileStructure)}
-        </div>
-        <div className="p-4 border-t border-gray-800 bg-gray-900/30">
-           <div className="flex items-center space-x-2 text-xs text-gray-500">
-             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-             <span>System Status: Online</span>
-           </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <FileViewer 
-          filename={selectedFile} 
-          content={getFileContent(selectedFile)} 
-        />
-      </div>
+    <div className={`kpi-card tone-${tone}`}>
+      <div className="kpi-label">{title}</div>
+      <div className="kpi-value">{value}</div>
     </div>
   );
-};
+}
 
-export default App;
+function ChartPanel({ symbol, tf }: { symbol: string; tf: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const [candles, setCandles] = useState<CandlestickData<Time>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const chartTopic = useMemo(() => `chart.kline.${normalizeTopicSymbol(symbol)}.${tf}`, [symbol, tf]);
+
+  const loadBootstrap = useCallback(async () => {
+    setLoading(true);
+    try {
+      const kline = await apiGet<KlineData>("/api/klines", { symbol, tf, limit: 300 });
+      const next = (kline.candles || []).map((item) => ({
+        time: item.time as Time,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+      }));
+      setCandles(next);
+      setError(null);
+    } catch (err) {
+      setError(toErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol, tf]);
+
+  useEffect(() => {
+    loadBootstrap();
+  }, [loadBootstrap]);
+
+  const wsStatus = useTopicWebSocket(
+    chartTopic,
+    (payload, eventType) => {
+      if (!eventType.startsWith("chart.kline.")) return;
+
+      const payloadCandles = payload.candles;
+      if (Array.isArray(payloadCandles) && payloadCandles.length > 0) {
+        const mapped = payloadCandles
+          .map((item) => {
+            const candle = item as KlineCandle;
+            return {
+              time: candle.time as Time,
+              open: candle.open,
+              high: candle.high,
+              low: candle.low,
+              close: candle.close,
+            };
+          })
+          .filter((item) => Number.isFinite(item.open) && Number.isFinite(item.close));
+        setCandles(mapped);
+        return;
+      }
+
+      const last = payload.kline_last as KlineCandle | undefined;
+      if (!last) return;
+      const next = {
+        time: last.time as Time,
+        open: last.open,
+        high: last.high,
+        low: last.low,
+        close: last.close,
+      };
+      setCandles((prev) => {
+        if (prev.length === 0) return [next];
+        const cloned = [...prev];
+        const lastIdx = cloned.length - 1;
+        if (cloned[lastIdx].time === next.time) {
+          cloned[lastIdx] = next;
+        } else {
+          cloned.push(next);
+          if (cloned.length > 600) {
+            cloned.shift();
+          }
+        }
+        return cloned;
+      });
+    },
+    loadBootstrap,
+  );
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const chart = createChart(containerRef.current, {
+      width: containerRef.current.clientWidth,
+      height: 430,
+      layout: { background: { type: ColorType.Solid, color: "#0f172a" }, textColor: "#d4d4d8" },
+      grid: {
+        vertLines: { color: "rgba(212,212,216,0.08)" },
+        horzLines: { color: "rgba(212,212,216,0.08)" },
+      },
+      rightPriceScale: { borderColor: "rgba(212,212,216,0.2)" },
+      timeScale: { borderColor: "rgba(212,212,216,0.2)", timeVisible: true, secondsVisible: false },
+      crosshair: {
+        vertLine: { color: "rgba(59,130,246,0.35)" },
+        horzLine: { color: "rgba(59,130,246,0.35)" },
+      },
+    });
+
+    const series = chart.addCandlestickSeries({
+      upColor: "#10b981",
+      downColor: "#ef4444",
+      wickUpColor: "#10b981",
+      wickDownColor: "#ef4444",
+      borderVisible: false,
+    });
+
+    const resize = () => {
+      if (!containerRef.current) return;
+      chart.applyOptions({ width: containerRef.current.clientWidth });
+      chart.timeScale().fitContent();
+    };
+
+    window.addEventListener("resize", resize);
+    chartRef.current = chart;
+    seriesRef.current = series;
+
+    return () => {
+      window.removeEventListener("resize", resize);
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!seriesRef.current || candles.length === 0) return;
+    seriesRef.current.setData(candles);
+    chartRef.current?.timeScale().fitContent();
+  }, [candles]);
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h3>Candlestick</h3>
+        <div className="tiny-metadata">
+          <span>{symbol}</span>
+          <span>{tf}</span>
+          <span className={`ws-${wsStatus.status}`}>WS: {wsStatus.status}</span>
+        </div>
+      </div>
+      {error ? <div className="error-banner">{error}</div> : null}
+      {loading ? <div className="subtle-status">loading chart...</div> : null}
+      <div className="chart-shell" ref={containerRef} />
+    </div>
+  );
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [mode, setMode] = useState<"PAPER" | "LIVE">("PAPER");
+  const [symbol, setSymbol] = useState("BTC/USDT");
+  const [tf, setTf] = useState("1h");
+  const [sessionId, setSessionId] = useState("");
+
+  const summaryFetcher = useCallback(() => apiGet<SummaryData>("/api/dashboard/summary", { mode }), [mode]);
+  const candidatesFetcher = useCallback(() => apiGet<CandidateData[]>("/api/candidates", { limit: 40 }), []);
+  const signalsFetcher = useCallback(() => apiGet<SignalData[]>("/api/signals", { limit: 60, symbol }), [symbol]);
+  const positionsFetcher = useCallback(
+    () => apiGet<PositionData[]>("/api/positions", { limit: 60, symbol, session_id: sessionId }),
+    [sessionId, symbol],
+  );
+  const ordersFetcher = useCallback(() => apiGet<OrderData[]>("/api/orders", { limit: 40, symbol }), [symbol]);
+  const eventsFetcher = useCallback(() => apiGet<EventData[]>("/api/events", { limit: 12 }), []);
+
+  const summary = usePollingResource(summaryFetcher, 5000);
+  const candidates = usePollingResource(candidatesFetcher, 15000);
+  const signals = usePollingResource(signalsFetcher, 7000);
+  const positions = usePollingResource(positionsFetcher, 7000);
+  const orders = usePollingResource(ordersFetcher, 9000);
+  const events = usePollingResource(eventsFetcher, 6000);
+
+  const symbolOptions = useMemo(() => {
+    const fromCandidates = (candidates.data || []).map((item) => item.symbol);
+    return Array.from(new Set([...DEFAULT_SYMBOLS, ...fromCandidates])).sort();
+  }, [candidates.data]);
+
+  return (
+    <div className="layout">
+      <header className="topbar">
+        <div>
+          <h1>Zenith Mission Control</h1>
+          <p>React dashboard for operations, scan, signals, positions, and chart stream</p>
+        </div>
+        <div className="topbar-actions">
+          <button onClick={summary.refresh}>Refresh</button>
+        </div>
+      </header>
+
+      <section className="toolbar">
+        <label>
+          Mode
+          <select value={mode} onChange={(event) => setMode(event.target.value as "PAPER" | "LIVE")}>
+            <option value="PAPER">PAPER</option>
+            <option value="LIVE">LIVE</option>
+          </select>
+        </label>
+        <label>
+          Symbol
+          <select value={symbol} onChange={(event) => setSymbol(event.target.value)}>
+            {symbolOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Timeframe
+          <select value={tf} onChange={(event) => setTf(event.target.value)}>
+            {TIMEFRAMES.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Session
+          <input
+            value={sessionId}
+            onChange={(event) => setSessionId(event.target.value)}
+            placeholder="optional session id"
+          />
+        </label>
+        <div className="toolbar-note">{summary.syncing ? "syncing..." : summary.lastUpdated ? `updated ${new Date(summary.lastUpdated).toLocaleTimeString()}` : ""}</div>
+      </section>
+
+      <nav className="tabbar">
+        {TAB_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            className={activeTab === item.id ? "active" : ""}
+            onClick={() => setActiveTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "overview" ? (
+        <section className="content">
+          {summary.error ? <div className="error-banner">{summary.error}</div> : null}
+          <div className="kpi-grid">
+            <SummaryCard title="Equity" value={`$${summary.data ? formatMoney(summary.data.equity) : "-"}`} />
+            <SummaryCard
+              title="Daily PnL"
+              value={`$${summary.data ? formatMoney(summary.data.daily_pnl) : "-"}`}
+              tone={summary.data && summary.data.daily_pnl < 0 ? "bad" : "good"}
+            />
+            <SummaryCard
+              title="Drawdown"
+              value={summary.data ? formatPct(summary.data.drawdown_pct) : "-"}
+              tone={summary.data && summary.data.drawdown_pct > 6 ? "bad" : "neutral"}
+            />
+            <SummaryCard
+              title="Win Rate"
+              value={summary.data ? formatPct(summary.data.win_rate) : "-"}
+              tone={summary.data && summary.data.win_rate >= 50 ? "good" : "bad"}
+            />
+            <SummaryCard
+              title="Open Positions"
+              value={summary.data ? String(summary.data.open_positions) : "-"}
+              tone="neutral"
+            />
+            <SummaryCard title="Bot Status" value={summary.data ? summary.data.bot_status : "-"} tone="neutral" />
+          </div>
+
+          <div className="panel">
+            <div className="panel-head">
+              <h3>System Events</h3>
+              {events.syncing ? <span className="subtle-status">syncing...</span> : null}
+            </div>
+            {events.error ? <div className="error-banner">{events.error}</div> : null}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Level</th>
+                    <th>Role</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(events.data || []).map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDateTime(item.created_at)}</td>
+                      <td>{item.level}</td>
+                      <td>{item.role}</td>
+                      <td>{item.message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "candidates" ? (
+        <section className="content">
+          <div className="panel">
+            <div className="panel-head">
+              <h3>Candidate Scan</h3>
+              {candidates.syncing ? <span className="subtle-status">syncing...</span> : null}
+            </div>
+            {candidates.error ? <div className="error-banner">{candidates.error}</div> : null}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Symbol</th>
+                    <th>Liquidity</th>
+                    <th>Tradable</th>
+                    <th>Reject Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(candidates.data || []).map((item) => (
+                    <tr key={item.symbol}>
+                      <td>{item.screener_rank}</td>
+                      <td>{item.symbol}</td>
+                      <td>{item.liquidity_score.toFixed(1)}</td>
+                      <td>{item.tradable ? "YES" : "NO"}</td>
+                      <td>{item.reject_reason || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "signals" ? (
+        <section className="content">
+          <div className="panel">
+            <div className="panel-head">
+              <h3>Signals</h3>
+              {signals.syncing ? <span className="subtle-status">syncing...</span> : null}
+            </div>
+            {signals.error ? <div className="error-banner">{signals.error}</div> : null}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Symbol</th>
+                    <th>Type</th>
+                    <th>Confidence</th>
+                    <th>Status</th>
+                    <th>Reasons</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(signals.data || []).map((item) => (
+                    <tr key={item.id}>
+                      <td className="mono">{item.id.slice(0, 8)}</td>
+                      <td>{item.symbol}</td>
+                      <td>{item.signal_type}</td>
+                      <td>{item.confidence.toFixed(1)}</td>
+                      <td>{item.status}</td>
+                      <td>{item.reason_codes.join(", ") || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "positions" ? (
+        <section className="content two-panels">
+          <div className="panel">
+            <div className="panel-head">
+              <h3>Positions</h3>
+              {positions.syncing ? <span className="subtle-status">syncing...</span> : null}
+            </div>
+            {positions.error ? <div className="error-banner">{positions.error}</div> : null}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Entry</th>
+                    <th>Qty</th>
+                    <th>Unrealized</th>
+                    <th>Realized</th>
+                    <th>Open</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(positions.data || []).map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.symbol}</td>
+                      <td>{item.side}</td>
+                      <td>{item.entry_avg.toFixed(4)}</td>
+                      <td>{item.quantity.toFixed(6)}</td>
+                      <td className={item.unrealized_pnl >= 0 ? "good" : "bad"}>{item.unrealized_pnl.toFixed(2)}</td>
+                      <td className={item.realized_pnl >= 0 ? "good" : "bad"}>{item.realized_pnl.toFixed(2)}</td>
+                      <td>{item.is_open ? "YES" : "NO"}</td>
+                      <td>{formatDateTime(item.closed_at || item.opened_at || item.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-head">
+              <h3>Orders</h3>
+              {orders.syncing ? <span className="subtle-status">syncing...</span> : null}
+            </div>
+            {orders.error ? <div className="error-banner">{orders.error}</div> : null}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Symbol</th>
+                    <th>Type</th>
+                    <th>Price</th>
+                    <th>Qty</th>
+                    <th>Fee</th>
+                    <th>Slippage(bps)</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(orders.data || []).map((item) => (
+                    <tr key={item.id}>
+                      <td className="mono">{item.id.slice(0, 8)}</td>
+                      <td>{item.symbol}</td>
+                      <td>{item.signal_type}</td>
+                      <td>{item.price_filled.toFixed(4)}</td>
+                      <td>{item.quantity.toFixed(6)}</td>
+                      <td>{item.fee.toFixed(4)}</td>
+                      <td>{item.slippage_bps !== null ? item.slippage_bps.toFixed(2) : "-"}</td>
+                      <td>{item.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "chart" ? (
+        <section className="content">
+          <ChartPanel symbol={symbol} tf={tf} />
+        </section>
+      ) : null}
+
+      {(summary.loading || candidates.loading) && !summary.data ? (
+        <div className="subtle-status page-loading">loading dashboard...</div>
+      ) : null}
+    </div>
+  );
+}
+
+const rootElement = document.getElementById("root");
+if (!rootElement) {
+  throw new Error("Root element not found");
+}
+
+createRoot(rootElement).render(<App />);

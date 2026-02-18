@@ -11,6 +11,8 @@ plotly
 tqdm
 schedule
 pytz
+fastapi
+uvicorn
 
 # Optional/Utility
 urllib3

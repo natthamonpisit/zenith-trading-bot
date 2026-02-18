@@ -100,24 +100,24 @@ CREATE TABLE IF NOT EXISTS bot_config (
 -- Seed initial config (keys match Judge + Config Page conventions)
 INSERT INTO bot_config (key, value, description)
 VALUES
-('MAX_RISK_PER_TRADE', '2.0', 'Percentage of portfolio risk per trade'),
-('RSI_THRESHOLD', '75', 'RSI threshold - reject BUY if RSI above this'),
-('AI_CONF_THRESHOLD', '60', 'Minimum AI confidence to consider a trade'),
-('POSITION_SIZE_PCT', '5.0', 'Position size as percentage of wallet'),
-('MAX_OPEN_POSITIONS', '5', 'Maximum number of concurrent open positions'),
-('TRADING_MODE', 'PAPER', 'PAPER or LIVE trading mode'),
-('TIMEFRAME', '1h', 'Default trading timeframe'),
-('MIN_VOLUME', '50000', 'Minimum 24h volume in USDT'),
-('TRADING_UNIVERSE', 'ALL', 'ALL, SAFE_LIST, or TOP_30'),
-('FARMING_INTERVAL_HOURS', '12', 'Hours between farming cycles'),
-('TRAILING_STOP_ENABLED', 'true', 'Enable trailing stop loss'),
-('TRAILING_STOP_PCT', '3.0', 'Trailing stop percentage below peak price'),
-('MIN_PROFIT_TO_TRAIL_PCT', '1.0', 'Minimum profit % before trailing stop activates'),
-('ENABLE_DOWNTREND_PROTECTION', 'false', 'Enable market-wide downtrend protection'),
-('DOWNTREND_PROTECTION_MODE', 'MODERATE', 'Protection mode: STRICT, MODERATE, or SELECTIVE'),
-('DOWNTREND_AI_BOOST', '20', 'Additional AI confidence % required during downtrends'),
-('DOWNTREND_SIZE_REDUCTION_PCT', '30', 'Position size reduction % in moderate downtrends'),
-('ADX_TREND_THRESHOLD', '25', 'ADX above this value indicates a trending market')
+('MAX_RISK_PER_TRADE', '"2.0"', 'Percentage of portfolio risk per trade'),
+('RSI_THRESHOLD', '"75"', 'RSI threshold - reject BUY if RSI above this'),
+('AI_CONF_THRESHOLD', '"60"', 'Minimum AI confidence to consider a trade'),
+('POSITION_SIZE_PCT', '"5.0"', 'Position size as percentage of wallet'),
+('MAX_OPEN_POSITIONS', '"5"', 'Maximum number of concurrent open positions'),
+('TRADING_MODE', '"PAPER"', 'PAPER or LIVE trading mode'),
+('TIMEFRAME', '"1h"', 'Default trading timeframe'),
+('MIN_VOLUME', '"50000"', 'Minimum 24h volume in USDT'),
+('TRADING_UNIVERSE', '"ALL"', 'ALL, SAFE_LIST, or TOP_30'),
+('FARMING_INTERVAL_HOURS', '"12"', 'Hours between farming cycles'),
+('TRAILING_STOP_ENABLED', '"true"', 'Enable trailing stop loss'),
+('TRAILING_STOP_PCT', '"3.0"', 'Trailing stop percentage below peak price'),
+('MIN_PROFIT_TO_TRAIL_PCT', '"1.0"', 'Minimum profit % before trailing stop activates'),
+('ENABLE_DOWNTREND_PROTECTION', '"false"', 'Enable market-wide downtrend protection'),
+('DOWNTREND_PROTECTION_MODE', '"MODERATE"', 'Protection mode: STRICT, MODERATE, or SELECTIVE'),
+('DOWNTREND_AI_BOOST', '"20"', 'Additional AI confidence % required during downtrends'),
+('DOWNTREND_SIZE_REDUCTION_PCT', '"30"', 'Position size reduction % in moderate downtrends'),
+('ADX_TREND_THRESHOLD', '"25"', 'ADX above this value indicates a trending market')
 ON CONFLICT DO NOTHING;
 
 -- 8. System Logs
