@@ -5,6 +5,8 @@ import threading
 import os
 import pandas as pd
 from src.database import get_db
+from src.ai.tiering import TieredAIDecisionEngine
+from src.telemetry.tracker import TelemetryTracker
 
 # --- IMPORT NEW ROLES ---
 from src.roles.job_screener import HeadHunter
@@ -47,12 +49,32 @@ radar = Radar(price_spy) # Radar uses PriceSpy
 print("🧠 Initializing AI Strategist...")
 strategist = Strategist()
 print("✅ Strategist ready")
+tiered_ai_engine = TieredAIDecisionEngine(strategist=strategist)
+telemetry_tracker = TelemetryTracker(db=db)
 
 judge = Judge()
 sniper = SniperExecutor(spy_instance=price_spy)
 wallet_sync = WalletSync(db, sniper.exchange)  # Use sniper's exchange instance
 
 TIMEFRAME = "1h"
+
+
+def get_config_value(key, default=None):
+    try:
+        result = db.table("bot_config").select("value").eq("key", key).limit(1).execute()
+        if result.data:
+            raw = result.data[0].get("value")
+            if isinstance(raw, str):
+                return raw.replace('"', "").strip()
+            return raw
+    except Exception:
+        pass
+    return default
+
+
+def is_ai_tiering_enabled():
+    raw = str(get_config_value("ENABLE_AI_TIERING", "false")).lower()
+    return raw in ("1", "true", "yes")
 
 def is_bot_stopped():
     """Check if the bot has been stopped via dashboard Emergency Stop."""
@@ -127,9 +149,61 @@ def process_pair(pair, timeframe, intent="ENTRY"):
         ]
         available_cols = [c for c in tech_cols if c in df.columns]
         tech_snapshot = df[available_cols].tail(5).fillna(0).round(6).to_dict()
-        
-        # Call AI with explicit INTENT
-        analysis = strategist.analyze_market(None, pair, tech_snapshot, intent=intent)
+
+        tier_run_id = None
+        analysis = None
+
+        # Call AI with explicit INTENT (P5 tiering optional)
+        if is_ai_tiering_enabled():
+            tier_result = tiered_ai_engine.evaluate(
+                symbol=pair,
+                tech_snapshot=tech_snapshot,
+                intent=intent,
+                config=judge.config,
+            )
+            tier_run_id = tier_result["run_id"]
+            analysis = tier_result["final"]
+
+            # P4: persist all 3 tier outputs for replay
+            try:
+                for row in tiered_ai_engine.to_telemetry_records(
+                    result=tier_result, symbol=pair, timeframe=timeframe
+                ):
+                    telemetry_tracker.track_ai_decision(
+                        run_id=row["run_id"],
+                        symbol=row["symbol"],
+                        timeframe=row["timeframe"],
+                        tier=row["tier"],
+                        model=row["model"],
+                        prompt=row["prompt"],
+                        input_payload=row["input_payload"],
+                        output_json=row["output_json"],
+                        confidence=row["confidence"],
+                        latency_ms=row["latency_ms"],
+                    )
+            except Exception as telemetry_error:
+                print(f"Telemetry tier save error: {telemetry_error}")
+        else:
+            analysis = strategist.analyze_market(None, pair, tech_snapshot, intent=intent)
+            tier_run_id = f"{pair}-{int(time.time())}"
+            # P4: persist single-tier decision (legacy path)
+            try:
+                if analysis:
+                    telemetry_tracker.track_ai_decision(
+                        run_id=tier_run_id,
+                        symbol=pair,
+                        timeframe=timeframe,
+                        tier="TIER_2_DECISION",
+                        model=str(get_config_value("AI_MODEL", "GEMINI")),
+                        prompt={"type": "legacy"},
+                        input_payload=tech_snapshot,
+                        output_json=analysis,
+                        confidence=float(analysis.get("confidence", 0)),
+                        latency_ms=0,
+                    )
+            except Exception as telemetry_error:
+                print(f"Telemetry decision save error: {telemetry_error}")
+
         if not analysis: 
             print("❌ AI Analysis Failed")
             return
@@ -197,6 +271,40 @@ def process_pair(pair, timeframe, intent="ENTRY"):
         verdict = judge.evaluate(ai_data, tech_data, balance, is_sim=is_sim, asset_id=asset_id)
         print(f"   - AI Recommendation: {ai_rec} (Confidence: {ai_data['confidence']}%)")
         print(f"   - Judge Verdict: {verdict.decision} -> {verdict.reason}")
+
+        # P4: store rule evaluation snapshot for replay/debug
+        try:
+            min_conf = float(judge.config.get("AI_CONF_THRESHOLD", 60))
+            rsi_limit = float(judge.config.get("RSI_THRESHOLD", 75))
+            telemetry_tracker.track_rule_evaluation(
+                run_id=tier_run_id,
+                symbol=pair,
+                rule_name="AI_CONF_THRESHOLD",
+                passed=float(ai_data.get("confidence", 0)) >= min_conf,
+                observed_value=ai_data.get("confidence"),
+                threshold_value=min_conf,
+                reason=verdict.reason,
+            )
+            telemetry_tracker.track_rule_evaluation(
+                run_id=tier_run_id,
+                symbol=pair,
+                rule_name="RSI_THRESHOLD",
+                passed=float(tech_data.get("rsi", 0)) <= rsi_limit,
+                observed_value=tech_data.get("rsi"),
+                threshold_value=rsi_limit,
+                reason=verdict.reason,
+            )
+            telemetry_tracker.track_rule_evaluation(
+                run_id=tier_run_id,
+                symbol=pair,
+                rule_name="JUDGE_FINAL",
+                passed=verdict.decision == "APPROVED",
+                observed_value=verdict.decision,
+                threshold_value="APPROVED",
+                reason=verdict.reason,
+            )
+        except Exception as telemetry_error:
+            print(f"Telemetry rule save error: {telemetry_error}")
 
         # Log Signal to DB (only BUY/SELL, not WAIT/HOLD)
         current_price = float(df['close'].iloc[-1])
@@ -357,6 +465,52 @@ def check_trailing_stops():
     except Exception as e:
         print(f"Trailing Stop Check Error: {e}")
 
+
+def sync_post_trade_attribution(limit=30):
+    """
+    P4 backfill: ensure every recently closed position has attribution row.
+    """
+    try:
+        closed = (
+            db.table("positions")
+            .select("id,pnl,exit_reason,closed_at")
+            .eq("is_open", False)
+            .order("closed_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        if not closed.data:
+            return
+
+        for row in closed.data:
+            position_id = row.get("id")
+            if not position_id:
+                continue
+
+            already = (
+                db.table("post_trade_attribution")
+                .select("id")
+                .eq("position_id", position_id)
+                .limit(1)
+                .execute()
+            )
+            if already.data:
+                continue
+
+            pnl = float(row.get("pnl") or 0.0)
+            outcome = "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAK_EVEN"
+            telemetry_tracker.track_post_trade_attribution(
+                position_id=position_id,
+                run_id=None,
+                outcome=outcome,
+                pnl=pnl,
+                exit_reason=row.get("exit_reason"),
+                ai_vs_rule_alignment="UNKNOWN",
+                notes="Auto-generated from closed position",
+            )
+    except Exception as e:
+        print(f"Post-trade attribution sync error: {e}")
+
 def run_farming_cycle():
     """PHASE 1: FARMING (Data Gathering) - Runs occasionally"""
     log_activity("System", "🚜 Starting Farming Cycle (Data Gathering)...")
@@ -429,6 +583,8 @@ def run_trading_cycle():
 
     # 0. Check trailing stops BEFORE processing new signals
     check_trailing_stops()
+    # 0a. Sync P4 attribution rows for recently closed positions
+    sync_post_trade_attribution(limit=30)
 
     # 0b. Take balance snapshots for both modes (for drawdown tracking)
     try:
