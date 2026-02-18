@@ -155,6 +155,70 @@ flowchart TD
 
 `effective_risk_pct = base_risk_pct * regime_factor * confidence_factor * liquidity_factor`
 
+### 4.7 LLM Fallback Policy (MiniMax Primary + BytePlus Chat Backup)
+
+- เป้าหมาย: ให้ระบบตัดสินใจต่อเนื่องเมื่อ MiniMax ใช้ไม่ได้หรือ provider มีปัญหา
+- Primary reasoning model: `MiniMax` (งานคิดวิเคราะห์หลัก)
+- Backup pool: `BytePlus ModelArk (Chat free inference quota)` ใช้ `ARK_API_KEY` เดียว
+- ใช้งานฝั่ง Chat ด้วย `model id` โดยตรง (ไม่ต้องบังคับสร้าง custom endpoint)
+
+เงื่อนไขสลับ fallback (trigger อย่างใดอย่างหนึ่ง):
+
+- MiniMax ติด rate-limit, timeout, provider error
+- latency p95 ของ MiniMax สูงกว่า SLA ต่อเนื่อง
+- quota ของ model สำรองตัวปัจจุบันหมด (500k free quota ต่อโมเดล)
+
+Fallback order สำหรับงานคุย + ตีความข้อมูล (สำรอง 9 โมเดล):
+
+1. `DeepSeek-R1`
+2. `DeepSeek-V3.2`
+3. `GLM-4.7`
+4. `Kimi-K2`
+5. `DeepSeek-V3.1`
+6. `GPT-OSS-120B`
+7. `ByteDance-Seed-1.8`
+8. `ByteDance-Seed-1.6`
+9. `Skylark-pro`
+
+หมายเหตุ policy:
+
+- โมเดลเฉพาะทาง (เช่น translation/vision/flash) ไม่ใช้ใน reasoning fallback chain หลัก
+- fallback ต้อง log ลง DB ทุกครั้ง: `from_provider, from_model, to_provider, to_model, reason, error_code, latency_ms, quota_state, run_id`
+
+### 4.8 BytePlus Coding Plan Policy (Reserve for MiniMax Coding Fallback)
+
+- วัตถุประสงค์: ใช้ `BytePlus Coding Plan` เป็นตัวสำรองฝั่ง coding-analysis เมื่อ MiniMax ใช้งานไม่ได้
+- Cost policy: ใช้แพลนแบบ flat-rate รายเดือนเป็น reserve lane สำหรับงานสำคัญ
+- Model selection policy:
+  - Coding Plan lane ล็อคที่ `Kimi-K2.5`
+  - ใช้ผ่าน coding model routing (`ark-code-latest`) โดยไม่ต้องทำ custom endpoint list
+  - ถ้า Kimi-K2.5 ใช้ไม่ได้ค่อย fallback กลับไป BytePlus Chat pool ในข้อ 4.7
+
+Operational guardrails:
+
+- จำกัด use case เฉพาะ `coding-analysis` และ `critical-metric interpretation`
+- ห้ามส่งงาน non-critical/high-frequency มาที่ Coding Plan lane
+- บังคับ log ต่อ request: `provider, lane(chat|coding_plan), model, task_type, tokens_in, tokens_out, latency_ms, failover_from, failover_reason, run_id`
+
+### 4.9 API Key Role Split (Active Direction)
+
+- Key 1: `MINIMAX_API_KEY`
+  - primary สำหรับงานซับซ้อน/งานคิดวิเคราะห์เพื่อการตัดสินใจเทรด
+  - ใช้กับ decision stage และ critical interpretation
+- Key 2: `GEMINI_API_KEY` (Google Gemini `2.0-flash`, free tier)
+  - ใช้กับงานอ่านข้อความ/ข่าว, summarize, normalize input-output
+  - ไม่ใช้เป็น final authority ของการเปิดออเดอร์ถ้า MiniMax ยังปกติ
+- Key 3: `ARK_API_KEY` (BytePlus)
+  - Chat lane: pool สำรอง 9 โมเดลฟรีโควตา 500k ต่อโมเดล (ตามข้อ 4.7)
+  - Coding Plan lane: ล็อค `Kimi-K2.5` แบบ flat-rate รายเดือน (ตามข้อ 4.8)
+  - ทำหน้าที่ fallback เมื่อ MiniMax หรือ Google lane มีปัญหา
+
+Routing summary (production intent):
+
+1. `Decision/Complex reasoning` -> MiniMax primary
+2. `Read/Summarize news & payload` -> Gemini Flash primary
+3. `Fallback hard tasks` -> BytePlus (`Kimi-K2.5` coding plan หรือ chat pool ตาม policy)
+
 ## 5) Non-AI Part Direction
 
 ### 5.1 Library Stack ที่แนะนำ
@@ -483,6 +547,9 @@ flowchart TD
 3. เพิ่ม replay/post-mortem ก่อนเพิ่มความซับซ้อนของ model
 4. ตั้ง gate เดียวก่อน live:  
    - max drawdown, win rate, profit factor, incident rate, order failure rate ต้องผ่านพร้อมกัน
+5. ใช้ `Deterministic Performance Core` เป็น source of truth และให้ AI เป็น interpreter เท่านั้น
+   - Period ที่บังคับใช้: Daily (24h), Weekly (7d), Monthly (30d), และ Event-based เมื่อ drawdown เกิน threshold
+   - บังคับ `minimum trade sample` ก่อนอนุญาตให้ AI แนะนำการปรับพารามิเตอร์ (กัน overfit)
 
 ## 17) Success Criteria (นิยามว่า “พร้อมจริง”)
 

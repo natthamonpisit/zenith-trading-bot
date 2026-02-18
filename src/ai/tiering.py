@@ -106,7 +106,10 @@ class TieredAIDecisionEngine:
             "confidence": max(0.0, min(100.0, confidence)),
             "sentiment_score": max(-1.0, min(1.0, sentiment)),
             "reasoning": reasoning,
-            "model": getattr(getattr(self.strategist, "model", None), "model_name", "GEMINI"),
+            "model": str(
+                (raw or {}).get("model")
+                or getattr(getattr(self.strategist, "model", None), "model_name", "GEMINI")
+            ),
         }
 
     def tier_3_govern(

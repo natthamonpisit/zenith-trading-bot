@@ -1,6 +1,8 @@
-import google.generativeai as genai
+from google import genai
 import os
 import json
+import requests
+from datetime import datetime, timedelta, timezone
 from tenacity import retry, stop_after_attempt, wait_fixed
 from pydantic import BaseModel, Field
 from src.database import get_db
@@ -8,31 +10,74 @@ from src.database import get_db
 # Error handling utilities
 from src.utils import CircuitBreaker, ExternalAPIError
 
+
+class _GeminiModelRef:
+    """Compatibility shim to keep model_name access pattern intact."""
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+
 # --- THE STRATEGIST (AI) ---
 class Strategist:
     """
     THE STRATEGIST (AI Reasoning Engine)
-    Uses Google Gemini to analyze technical indicators and news sentiment.
+    Uses provider routing for decision analysis:
+    - MiniMax Coding Plan (primary for complex decision payloads)
+    - Gemini (fallback and report generation)
     """
     def __init__(self):
         # Initialize database first (needed for saving model info)
         self.db = get_db()
-        
-        # Ensure API Key is loaded
-        gemini_key = os.environ.get("GEMINI_API_KEY")
-        if not gemini_key:
+
+        # MiniMax Coding Plan configuration (primary for complex decision analysis)
+        self.minimax_coding_key = os.environ.get("MINIMAX_CODING_PLAN_KEY", "").strip()
+        self.minimax_model = os.environ.get("MINIMAX_CODING_MODEL", "MiniMax-M2.5").strip()
+        self.minimax_base_url = os.environ.get("MINIMAX_API_BASE_URL", "https://api.minimax.io/v1").strip().rstrip("/")
+        try:
+            self.minimax_timeout_sec = int(float(os.environ.get("MINIMAX_TIMEOUT_SEC", "20")))
+        except (TypeError, ValueError):
+            self.minimax_timeout_sec = 20
+        try:
+            self.minimax_complexity_threshold = int(float(os.environ.get("MINIMAX_COMPLEXITY_THRESHOLD", "10")))
+        except (TypeError, ValueError):
+            self.minimax_complexity_threshold = 10
+
+        prefer_provider = os.environ.get("STRATEGIST_PRIMARY_PROVIDER", "MINIMAX_CODING").strip().upper()
+        self.prefer_minimax_for_decision = prefer_provider in {"MINIMAX_CODING", "MINIMAX", "CODING_PLAN"}
+        self.last_model_used = "UNSET"
+
+        if self.minimax_coding_key:
+            print(f"🧠 MiniMax Coding enabled for decision analysis ({self.minimax_model})")
+        else:
+            print("ℹ️ MINIMAX_CODING_PLAN_KEY not found; strategist decisions will use Gemini.")
+
+        # Ensure Gemini API key is loaded and initialize new SDK client.
+        self.gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not self.gemini_key:
             print("⚠️ GEMINI_API_KEY not found in environment")
-        
-        genai.configure(api_key=gemini_key)
-        
-        # Dynamic model selection with fallback (after db init)
-        self.model = self._select_best_model()
-        
-        # Circuit breaker for Gemini AI protection
+
+        self.gemini_client = None
+        if self.gemini_key:
+            try:
+                self.gemini_client = genai.Client(api_key=self.gemini_key)
+            except Exception as e:
+                print(f"⚠️ Failed to initialize google.genai client: {e}")
+
+        # Dynamic Gemini model selection (used as fallback + report generation)
+        self.gemini_model_name = self._select_best_model()
+        # Keep .model.model_name compatibility for existing telemetry paths.
+        self.model = _GeminiModelRef(self.gemini_model_name)
+
+        # Circuit breakers for provider protection
         self.gemini_breaker = CircuitBreaker(
             name="GEMINI_AI",
             failure_threshold=3,  # Stricter for AI
             timeout=90.0  # Longer recovery for AI
+        )
+        self.minimax_breaker = CircuitBreaker(
+            name="MINIMAX_CODING_AI",
+            failure_threshold=3,
+            timeout=90.0
         )
     
     def _select_best_model(self):
@@ -49,73 +94,114 @@ class Strategist:
             'gemini-1.5-pro',             # Fallback to Pro
             'gemini-pro',                 # Legacy fallback
         ]
-        
+
         selected_model_name = None
-        
+
+        if not self.gemini_client:
+            selected_model_name = 'gemini-2.0-flash'
+            print(f"⚠️ Gemini client unavailable. Using fallback model name: {selected_model_name}")
+            return selected_model_name
+
         try:
             # List all available models
-            available_models = genai.list_models()
-            available_names = [m.name.split('/')[-1] for m in available_models 
-                             if 'generateContent' in m.supported_generation_methods]
-            
+            available_models = list(self.gemini_client.models.list())
+            available_names = [str(m.name).split('/')[-1] for m in available_models if getattr(m, "name", None)]
+
             print(f"🔍 Available Gemini models: {', '.join(available_names[:5])}...")
-            
+
             # Try each preferred model in order
             for model_name in preferred_models:
                 if model_name in available_names:
-                    try:
-                        model = genai.GenerativeModel(model_name)
-                        selected_model_name = model_name
-                        print(f"✅ Selected Gemini model: {model_name}")
-                        
-                        # Save to database for status monitoring
-                        try:
-                            self.db.table("bot_config").upsert({
-                                "key": "AI_MODEL",
-                                "value": model_name
-                            }).execute()
-                        except Exception as e:
-                            print(f"⚠️ Failed to save AI model to DB: {e}")
-                        
-                        return model
-                    except Exception as e:
-                        print(f"⚠️ Failed to initialize {model_name}: {e}")
-                        continue
-            
+                    selected_model_name = model_name
+                    print(f"✅ Selected Gemini model: {model_name}")
+                    break
+
             # If no preferred model works, use first available
-            if available_names:
-                fallback_model = available_names[0]
-                selected_model_name = fallback_model
-                print(f"⚠️ Using fallback model: {fallback_model}")
-                
-                # Save to database
-                try:
-                    self.db.table("bot_config").upsert({
-                        "key": "AI_MODEL",
-                        "value": fallback_model
-                    }).execute()
-                except:
-                    pass
-                
-                return genai.GenerativeModel(fallback_model)
-            
+            if not selected_model_name and available_names:
+                selected_model_name = available_names[0]
+                print(f"⚠️ Using fallback model: {selected_model_name}")
+
         except Exception as e:
             print(f"❌ Failed to list models: {e}")
-        
+
         # Ultimate fallback (most stable)
-        selected_model_name = 'gemini-1.5-flash'
-        print(f"⚠️ Using hardcoded fallback: {selected_model_name}")
-        
+        if not selected_model_name:
+            selected_model_name = 'gemini-2.0-flash'
+            print(f"⚠️ Using hardcoded fallback: {selected_model_name}")
+
         # Save to database
         try:
             self.db.table("bot_config").upsert({
                 "key": "AI_MODEL",
                 "value": selected_model_name
             }).execute()
-        except:
+        except Exception:
             pass
-        
-        return genai.GenerativeModel('gemini-1.5-flash')
+
+        return selected_model_name
+
+    def _mark_active_model(self, model_name: str):
+        self.last_model_used = model_name
+        if not self.db:
+            return
+        try:
+            self.db.table("bot_config").upsert({
+                "key": "AI_MODEL",
+                "value": model_name
+            }).execute()
+        except Exception as e:
+            print(f"⚠️ Failed to update active AI model: {e}")
+
+    def _payload_complexity_score(self, payload):
+        if isinstance(payload, dict):
+            score = len(payload)
+            for value in payload.values():
+                if isinstance(value, (dict, list)):
+                    score += len(value)
+                else:
+                    score += 1
+            return score
+        if isinstance(payload, list):
+            return len(payload)
+        return 1
+
+    def _should_use_minimax_for_decision(self, tech_data, intent: str) -> bool:
+        if not self.minimax_coding_key:
+            return False
+        if not self.prefer_minimax_for_decision:
+            return False
+
+        # ENTRY/EXIT decisions are the high-importance lane.
+        if intent in {"ENTRY", "EXIT"}:
+            complexity = self._payload_complexity_score(tech_data or {})
+            return complexity >= self.minimax_complexity_threshold
+
+        return False
+
+    def _normalize_ai_result(self, result, intent: str):
+        data = result if isinstance(result, dict) else {}
+        safe_action = "HOLD" if intent == "EXIT" else "WAIT"
+        allowed = {"EXIT": {"SELL", "HOLD"}, "ENTRY": {"BUY", "WAIT"}}
+        recommendation = str(data.get("recommendation", safe_action)).upper()
+        if recommendation not in allowed.get(intent, {"WAIT"}):
+            recommendation = safe_action
+
+        try:
+            confidence = float(data.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        try:
+            sentiment = float(data.get("sentiment_score", 0))
+        except (TypeError, ValueError):
+            sentiment = 0.0
+
+        return {
+            "sentiment_score": max(-1.0, min(1.0, sentiment)),
+            "confidence": max(0.0, min(100.0, confidence)),
+            "reasoning": str(data.get("reasoning", "")),
+            "recommendation": recommendation,
+        }
 
     def analyze_market(self, snapshot_id, asset_symbol, tech_data, intent="ENTRY"):
         """
@@ -177,26 +263,151 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
         """
 
         try:
-            return self._analyze_market(prompt)
+            if self._should_use_minimax_for_decision(tech_data=tech_data, intent=intent):
+                try:
+                    result = self._normalize_ai_result(
+                        self._analyze_with_minimax_coding(prompt), intent=intent
+                    )
+                    model_name = f"MINIMAX_CODING:{self.minimax_model}"
+                    result["model"] = model_name
+                    self._mark_active_model(model_name)
+                    return result
+                except Exception as minimax_error:
+                    # fallback to Gemini; keep loop alive
+                    print(f"⚠️ [MiniMax Coding Error] {minimax_error} | fallback -> Gemini")
+
+            result = self._normalize_ai_result(
+                self._analyze_market_gemini(prompt), intent=intent
+            )
+            model_name = getattr(self.model, "model_name", "GEMINI")
+            result["model"] = model_name
+            self._mark_active_model(model_name)
+            return result
         except Exception as e:
-            print(f"⚠️ [Gemini AI Error] analyze_market failed: {e}")
-            # Fallback: Return WAIT recommendation (safe default)
+            safe_action = 'HOLD' if intent == 'EXIT' else 'WAIT'
+            # Safe fallback decision to keep deterministic governor in control
             return {
                 'sentiment_score': 0.0,
                 'confidence': 0,
                 'reasoning': f'AI analysis unavailable: {str(e)}',
-                'recommendation': 'WAIT'
+                'recommendation': safe_action,
+                'model': 'NONE'
             }
 
+    @staticmethod
+    def _extract_json_object(text: str):
+        cleaned = str(text or "").replace('```json', '').replace('```', '').strip()
+        if not cleaned:
+            raise ValueError("Empty AI response")
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        start = cleaned.find("{")
+        if start == -1:
+            raise ValueError(f"No JSON object found in AI response: {cleaned[:180]}")
+
+        depth = 0
+        for idx in range(start, len(cleaned)):
+            ch = cleaned[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    snippet = cleaned[start:idx + 1]
+                    return json.loads(snippet)
+
+        raise ValueError("Unterminated JSON object in AI response")
+
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-    def _analyze_market(self, prompt: str):
+    def _analyze_market_gemini(self, prompt: str):
         """Retryable Gemini call + JSON parsing."""
+        if not self.gemini_client:
+            raise ExternalAPIError("Gemini client not configured")
+
         response = self.gemini_breaker.call_function(
-            lambda: self.model.generate_content(prompt, request_options={"timeout": 30})
+            lambda: self.gemini_client.models.generate_content(
+                model=self.gemini_model_name,
+                contents=prompt,
+                config={
+                    "temperature": 0,
+                    "max_output_tokens": 800,
+                },
+            )
         )
-        # Cleanup potential markdown formatting
-        text = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(text)
+        return self._extract_json_object(getattr(response, "text", ""))
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
+    def _analyze_with_minimax_coding(self, prompt: str):
+        """Retryable MiniMax Coding Plan call + JSON parsing."""
+        if not self.minimax_coding_key:
+            raise ExternalAPIError("MINIMAX_CODING_PLAN_KEY not configured")
+
+        url = f"{self.minimax_base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.minimax_coding_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.minimax_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a quantitative crypto decision analyst. "
+                        "Return only a valid JSON object with the requested schema."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0,
+            "max_tokens": 800,
+            "response_format": {"type": "json_object"},
+        }
+
+        def _request():
+            response = requests.post(url, headers=headers, json=payload, timeout=self.minimax_timeout_sec)
+            response_data = {}
+            if "application/json" in (response.headers.get("content-type") or ""):
+                try:
+                    response_data = response.json()
+                except Exception:
+                    response_data = {}
+
+            if response.status_code >= 400:
+                err_msg = ""
+                if isinstance(response_data, dict):
+                    err_msg = (
+                        response_data.get("base_resp", {}).get("status_msg")
+                        or response_data.get("error", {}).get("message")
+                        or ""
+                    )
+                if not err_msg:
+                    err_msg = (response.text or "")[:200]
+                raise ExternalAPIError(f"MiniMax HTTP {response.status_code}: {err_msg}")
+
+            base_resp = response_data.get("base_resp", {}) if isinstance(response_data, dict) else {}
+            status_code = base_resp.get("status_code", 0)
+            if status_code not in (0, None):
+                raise ExternalAPIError(
+                    f"MiniMax API error {status_code}: {base_resp.get('status_msg', 'unknown error')}"
+                )
+
+            choices = response_data.get("choices", []) if isinstance(response_data, dict) else []
+            if not choices:
+                raise ExternalAPIError("MiniMax returned no choices")
+
+            message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            if not content:
+                raise ExternalAPIError("MiniMax returned empty content")
+            return content
+
+        text = self.minimax_breaker.call_function(_request)
+        return self._extract_json_object(text)
             
     # Note: The signal construction actually happens in THE JUDGE or whoever calls this.
     # Strategist just returns recommendation.
@@ -205,82 +416,224 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
     # Wait, Strategist just returns JSON.
     # Let's check Judge.evaluate() in job_analysis.py (same file further down)
 
-    def generate_performance_report(self, trade_history, days_range, is_sim=False):
+    def generate_performance_report(self, trade_history, days_range, is_sim=False, min_trades=20):
         """
-        Generates a comprehensive performance report with structured data analysis.
+        Backward-compatible text report entrypoint.
+        Deterministic metrics are always computed first; AI layer is optional and gated.
         """
-        # Gather structured performance data
-        performance_data = self._gather_performance_data(is_sim)
+        review = self.analyze_performance_overview(
+            days_range=days_range,
+            is_sim=is_sim,
+            min_trades=min_trades,
+            include_ai=True,
+            trade_history=trade_history,
+        )
+        ai_report = review.get("ai_report")
+        if ai_report:
+            return ai_report
 
-        prompt = f"""
+        deterministic = review.get("deterministic", {})
+        return (
+            f"Deterministic performance snapshot ({review.get('period_days')}d) | "
+            f"Trades: {deterministic.get('total_trades', 0)} | "
+            f"Win rate: {deterministic.get('win_rate', 0):.1f}% | "
+            f"Net PnL: ${deterministic.get('total_pnl', 0):,.2f}. "
+            f"AI review skipped: {review.get('skip_reason', 'unknown')}."
+        )
+
+    def analyze_performance_overview(
+        self,
+        days_range=7,
+        is_sim=False,
+        min_trades=20,
+        include_ai=True,
+        trade_history=None,
+    ):
+        """
+        Two-layer performance analysis:
+        1) Deterministic metrics (source of truth)
+        2) AI interpretation (only when sample size is sufficient)
+        """
+        try:
+            period_days = max(1, int(days_range))
+        except (TypeError, ValueError):
+            period_days = 7
+        try:
+            minimum_trades = max(1, int(min_trades))
+        except (TypeError, ValueError):
+            minimum_trades = 20
+
+        metrics = self._gather_performance_data(is_sim=is_sim, days_range=period_days)
+        total_trades = int(metrics.get("total_trades", 0))
+        sample_ready = total_trades >= minimum_trades
+
+        result = {
+            "mode": "PAPER" if is_sim else "LIVE",
+            "period_days": period_days,
+            "minimum_trades": minimum_trades,
+            "sample_ready": sample_ready,
+            "deterministic": metrics,
+            "ai_model": None,
+            "ai_report": None,
+            "skip_reason": None,
+        }
+
+        if not include_ai:
+            result["skip_reason"] = "include_ai_disabled"
+            return result
+
+        if not sample_ready:
+            result["ai_model"] = "SKIPPED_LOW_SAMPLE"
+            result["skip_reason"] = f"insufficient_trades:{total_trades}<{minimum_trades}"
+            result["ai_report"] = (
+                f"Skipped AI deep analysis because sample size is too small "
+                f"({total_trades}/{minimum_trades} trades in {period_days}d). "
+                f"Action: hold core parameters and collect more trades before optimization."
+            )
+            return result
+
+        prompt = self._build_performance_prompt(
+            performance_data=metrics,
+            trade_history=trade_history,
+            days_range=period_days,
+            is_sim=is_sim,
+            min_trades=minimum_trades,
+        )
+
+        if self.minimax_coding_key and self.prefer_minimax_for_decision:
+            try:
+                text = self._generate_report_text_with_minimax(prompt)
+                result["ai_model"] = f"MINIMAX_CODING:{self.minimax_model}"
+                result["ai_report"] = text
+                return result
+            except Exception as minimax_error:
+                print(f"⚠️ [MiniMax Coding Error] performance report fallback -> Gemini ({minimax_error})")
+
+        try:
+            text = self._generate_report_text_with_gemini(prompt)
+            result["ai_model"] = getattr(self.model, "model_name", "GEMINI")
+            result["ai_report"] = text
+        except Exception as gemini_error:
+            result["ai_model"] = "NONE"
+            result["skip_reason"] = f"ai_generation_failed:{gemini_error}"
+            result["ai_report"] = (
+                "AI performance report unavailable. Use deterministic metrics until provider recovers."
+            )
+
+        return result
+
+    def _build_performance_prompt(self, performance_data, trade_history, days_range, is_sim, min_trades):
+        recent_trades = trade_history[:20] if isinstance(trade_history, list) else []
+        return f"""
         You are a Senior Portfolio Manager and Trading Analyst writing a comprehensive performance review.
         Period: Last {days_range} days.
         Mode: {"SIMULATION (Paper Trading)" if is_sim else "LIVE Trading"}
+        Minimum sample threshold: {min_trades} closed trades.
 
-        === STRUCTURED PERFORMANCE DATA ===
+        === DETERMINISTIC SOURCE-OF-TRUTH METRICS (DO NOT RE-CALCULATE) ===
+        {json.dumps(performance_data, default=str, indent=2)}
 
-        **P&L Summary:**
-        - Total Realized P&L: ${performance_data['total_pnl']:,.2f}
-        - Total Trades Closed: {performance_data['total_trades']}
-        - Winning Trades: {performance_data['wins']} ({performance_data['win_rate']:.1f}%)
-        - Losing Trades: {performance_data['losses']}
-        - Best Trade: ${performance_data['best_trade']:,.2f}
-        - Worst Trade: ${performance_data['worst_trade']:,.2f}
-        - Average Win: ${performance_data['avg_win']:,.2f}
-        - Average Loss: ${performance_data['avg_loss']:,.2f}
-
-        **Trade Signal Statistics:**
-        - Total Signals Generated: {performance_data['total_signals']}
-        - Approved (Executed): {performance_data['executed_signals']}
-        - Rejected: {performance_data['rejected_signals']}
-        - Approval Rate: {performance_data['approval_rate']:.1f}%
-
-        **Judge Guardrail Breakdown (Rejection Reasons):**
-        {json.dumps(performance_data['rejection_reasons'], indent=2)}
-
-        **Top Traded Symbols:**
-        {json.dumps(performance_data['top_symbols'], indent=2)}
-
-        **Recent Trade History (Last 20):**
-        {json.dumps(trade_history[:20] if trade_history else [], default=str, indent=2)}
-
-        **Exit Strategy Performance:**
-        {self._get_exit_reason_stats(trade_history)}
+        === RECENT CLOSED TRADES (OPTIONAL CONTEXT) ===
+        {json.dumps(recent_trades, default=str, indent=2)}
 
         === ANALYSIS TASK ===
+        1. Executive summary (2-3 sentences).
+        2. Risk-adjusted performance assessment:
+           - Expectancy, profit factor, win rate, drawdown behavior.
+        3. Signal quality:
+           - Approval/rejection pattern and key guardrails causing rejects.
+        4. Regime/symbol behavior:
+           - Best/worst symbols and whether behavior is stable or noisy.
+        5. Action plan:
+           - 3-5 prioritized actions with concrete thresholds.
+        6. Overfitting control:
+           - Explicitly state if data is still noisy and which parameters should NOT be changed yet.
 
-        1. **Executive Summary**: Provide a 2-3 sentence overview of overall performance.
-
-        2. **P&L Analysis**:
-           - Assess profitability and risk-adjusted returns
-           - Comment on win rate and average win/loss ratio
-           - Identify any concerning patterns
-
-        3. **Signal Quality Review**:
-           - Analyze the approval/rejection ratio
-           - Which guardrails are triggering most? Is this appropriate?
-           - Are there missed opportunities or over-filtering?
-
-        4. **Symbol Performance**:
-           - Which coins performed best/worst?
-           - Any recommendations for whitelist/blacklist adjustments?
-
-        5. **Strategy Recommendations**:
-           - Specific parameter adjustments (RSI threshold, AI confidence, position sizing)
-           - Risk management improvements
-           - Timing or market condition observations
-
-        6. **Action Items**:
-           - 3-5 concrete, actionable recommendations ranked by priority
-
-        Output: Well-formatted Markdown with headers, bullet points, and clear sections.
-        Be data-driven and specific in your analysis. Avoid generic advice.
+        Output markdown with clear headers and concise bullets.
+        Keep recommendations bounded by the deterministic metrics above.
         """
-        try:
-            response = self.model.generate_content(prompt, request_options={"timeout": 90})
-            return response.text
-        except Exception as e:
-            return f"Failed to generate report: {e}"
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
+    def _generate_report_text_with_gemini(self, prompt: str):
+        if not self.gemini_client:
+            raise ExternalAPIError("Gemini client not configured")
+
+        response = self.gemini_breaker.call_function(
+            lambda: self.gemini_client.models.generate_content(
+                model=self.gemini_model_name,
+                contents=prompt,
+                config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 1400,
+                },
+            )
+        )
+        return str(getattr(response, "text", "")).strip()
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
+    def _generate_report_text_with_minimax(self, prompt: str):
+        if not self.minimax_coding_key:
+            raise ExternalAPIError("MINIMAX_CODING_PLAN_KEY not configured")
+
+        url = f"{self.minimax_base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.minimax_coding_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.minimax_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a portfolio performance reviewer. "
+                        "Use only the supplied deterministic metrics and avoid inventing numbers."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 1400,
+        }
+
+        def _request():
+            response = requests.post(url, headers=headers, json=payload, timeout=self.minimax_timeout_sec)
+            response_data = {}
+            if "application/json" in (response.headers.get("content-type") or ""):
+                try:
+                    response_data = response.json()
+                except Exception:
+                    response_data = {}
+
+            if response.status_code >= 400:
+                err_msg = ""
+                if isinstance(response_data, dict):
+                    err_msg = (
+                        response_data.get("base_resp", {}).get("status_msg")
+                        or response_data.get("error", {}).get("message")
+                        or ""
+                    )
+                if not err_msg:
+                    err_msg = (response.text or "")[:200]
+                raise ExternalAPIError(f"MiniMax HTTP {response.status_code}: {err_msg}")
+
+            base_resp = response_data.get("base_resp", {}) if isinstance(response_data, dict) else {}
+            status_code = base_resp.get("status_code", 0)
+            if status_code not in (0, None):
+                raise ExternalAPIError(
+                    f"MiniMax API error {status_code}: {base_resp.get('status_msg', 'unknown error')}"
+                )
+
+            choices = response_data.get("choices", []) if isinstance(response_data, dict) else []
+            if not choices:
+                raise ExternalAPIError("MiniMax returned no choices for report generation")
+            message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            if not content:
+                raise ExternalAPIError("MiniMax returned empty report content")
+            return str(content).strip()
+
+        return self.minimax_breaker.call_function(_request)
 
     def _get_exit_reason_stats(self, positions):
         """Calculate win rate and avg PnL by exit reason"""
@@ -314,27 +667,42 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
         return "\n".join(output) if output else "No data."
 
     def generate_performance_report_with_exit_stats(self, trade_history, days_range, is_sim=False):
-        """Enhanced report generation including Exit Strategy Analytics"""
-        # Call the original method logic but inject exit stats
-        # For now, let's just patch the prompt inside generate_performance_report
-        # But since we can't easily patch the middle of a string in replace_file_content,
-        # we will add the exit stats to the end of the prompt in the existing function.
-        pass # Placeholder comment
+        """Backward-compatible alias."""
+        return self.generate_performance_report(trade_history, days_range, is_sim=is_sim)
 
-    def _gather_performance_data(self, is_sim=False):
+    def _gather_performance_data(self, is_sim=False, days_range=7):
         """
         Gathers structured performance metrics from the database.
         """
+        try:
+            period_days = max(1, int(days_range))
+        except (TypeError, ValueError):
+            period_days = 7
+
+        period_end = datetime.now(timezone.utc)
+        period_start = period_end - timedelta(days=period_days)
+        period_start_iso = period_start.isoformat()
+
         data = {
+            'period_days': period_days,
+            'period_start': period_start_iso,
+            'period_end': period_end.isoformat(),
             'total_pnl': 0,
             'total_trades': 0,
             'wins': 0,
             'losses': 0,
+            'break_even': 0,
             'win_rate': 0,
             'best_trade': 0,
             'worst_trade': 0,
             'avg_win': 0,
             'avg_loss': 0,
+            'gross_profit': 0,
+            'gross_loss': 0,
+            'profit_factor': 0,
+            'expectancy': 0,
+            'payoff_ratio': 0,
+            'max_drawdown_pct_period': 0,
             'total_signals': 0,
             'executed_signals': 0,
             'rejected_signals': 0,
@@ -349,16 +717,20 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
                 .select("*, assets(symbol)")\
                 .eq("is_sim", is_sim)\
                 .eq("is_open", False)\
+                .gte("closed_at", period_start_iso)\
                 .execute()
 
             if closed_positions.data:
                 pnl_values = [float(p['pnl']) for p in closed_positions.data if p.get('pnl') is not None]
 
                 if pnl_values:
+                    gross_profit = sum(p for p in pnl_values if p > 0)
+                    gross_loss = abs(sum(p for p in pnl_values if p < 0))
                     data['total_pnl'] = sum(pnl_values)
                     data['total_trades'] = len(pnl_values)
                     data['wins'] = len([p for p in pnl_values if p > 0])
-                    data['losses'] = len([p for p in pnl_values if p <= 0])
+                    data['losses'] = len([p for p in pnl_values if p < 0])
+                    data['break_even'] = len([p for p in pnl_values if p == 0])
                     data['win_rate'] = (data['wins'] / data['total_trades'] * 100) if data['total_trades'] > 0 else 0
                     data['best_trade'] = max(pnl_values) if pnl_values else 0
                     data['worst_trade'] = min(pnl_values) if pnl_values else 0
@@ -367,6 +739,15 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
                     losing_trades = [p for p in pnl_values if p < 0]
                     data['avg_win'] = sum(winning_trades) / len(winning_trades) if winning_trades else 0
                     data['avg_loss'] = sum(losing_trades) / len(losing_trades) if losing_trades else 0
+                    data['gross_profit'] = gross_profit
+                    data['gross_loss'] = gross_loss
+                    data['profit_factor'] = (gross_profit / gross_loss) if gross_loss > 0 else (999.9 if gross_profit > 0 else 0)
+                    data['expectancy'] = data['total_pnl'] / data['total_trades']
+                    data['payoff_ratio'] = (
+                        data['avg_win'] / abs(data['avg_loss'])
+                        if data['avg_loss'] < 0 and data['avg_win'] > 0
+                        else 0
+                    )
 
                 # Symbol performance
                 symbol_pnl = {}
@@ -385,10 +766,31 @@ Consider: Is this asset showing RELATIVE STRENGTH vs overall market?
                     reverse=True
                 )[:10]
 
+            # Drawdown profile in selected period (active session for requested mode)
+            try:
+                active_session = self.db.table("trading_sessions")\
+                    .select("id")\
+                    .eq("mode", "PAPER" if is_sim else "LIVE")\
+                    .eq("is_active", True)\
+                    .limit(1)\
+                    .execute()
+                if active_session.data:
+                    session_id = active_session.data[0].get("id")
+                    dd_rows = self.db.table("balance_snapshots")\
+                        .select("drawdown_pct")\
+                        .eq("session_id", session_id)\
+                        .gte("snapshot_at", period_start_iso)\
+                        .execute()
+                    if dd_rows.data:
+                        data['max_drawdown_pct_period'] = max(float(r.get("drawdown_pct") or 0) for r in dd_rows.data)
+            except Exception:
+                data['max_drawdown_pct_period'] = 0
+
             # Get trade signal statistics
             all_signals = self.db.table("trade_signals")\
                 .select("status, judge_reason")\
                 .eq("is_sim", is_sim)\
+                .gte("created_at", period_start_iso)\
                 .execute()
 
             if all_signals.data:

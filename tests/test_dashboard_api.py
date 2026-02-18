@@ -47,6 +47,36 @@ def test_dashboard_summary_uses_contract(monkeypatch):
     assert body["data"]["bot_status"] == "ACTIVE"
 
 
+def test_performance_review_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+    monkeypatch.setattr("src.api.server._resolve_mode", lambda db, mode: "PAPER")
+
+    class DummyStrategist:
+        def analyze_performance_overview(self, days_range, is_sim, min_trades, include_ai):
+            return {
+                "mode": "PAPER",
+                "period_days": days_range,
+                "minimum_trades": min_trades,
+                "sample_ready": True,
+                "deterministic": {"total_trades": 42, "win_rate": 61.9},
+                "ai_model": "MINIMAX_CODING:MiniMax-M2.5",
+                "ai_report": "## Review\\n- good",
+                "skip_reason": None,
+            }
+
+    monkeypatch.setattr("src.api.server._get_strategist", lambda: DummyStrategist())
+    response = client.get("/api/performance/review", params={"days": 7, "min_trades": 20, "include_ai": True})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["period_days"] == 7
+    assert body["data"]["deterministic"]["total_trades"] == 42
+    assert body["data"]["ai_model"] == "MINIMAX_CODING:MiniMax-M2.5"
+
+
 def test_klines_invalid_timeframe_returns_validation_error():
     app = create_app()
     client = TestClient(app)

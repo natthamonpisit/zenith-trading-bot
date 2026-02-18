@@ -5,7 +5,7 @@ python-dotenv
 pandas
 pandas-ta-classic
 ccxt
-google-generativeai
+google-genai
 tenacity
 plotly
 tqdm

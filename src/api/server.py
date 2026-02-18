@@ -31,6 +31,7 @@ from src.contracts.error_codes import ErrorCode, build_api_error
 from src.database import get_db
 from src.ops.cutover import CutoverService
 from src.ops.hardening import HardeningService, compare_dashboard_summary
+from src.roles.job_analysis import Strategist
 from src.roles.job_price import PriceSpy
 from src.telemetry.tracker import TelemetryTracker
 from src.utils.rate_limiter import RateLimiter
@@ -46,6 +47,7 @@ WS_TOPIC_EVENTS = "system.events"
 WS_CHART_TOPIC_PATTERN = re.compile(r"^chart\.kline\.([A-Za-z0-9/_-]+)\.([A-Za-z0-9]+)$")
 
 _price_spy: Optional[PriceSpy] = None
+_strategist: Optional[Strategist] = None
 _client_limiters: Dict[str, RateLimiter] = {}
 
 
@@ -600,6 +602,13 @@ def _get_price_spy() -> PriceSpy:
     return _price_spy
 
 
+def _get_strategist() -> Strategist:
+    global _strategist
+    if _strategist is None:
+        _strategist = Strategist()
+    return _strategist
+
+
 def _fetch_exchange_klines(symbol: str, tf: str, limit: int) -> List[Dict[str, Any]]:
     spy = _get_price_spy()
     df = spy.fetch_ohlcv(symbol, tf, limit=limit)
@@ -843,6 +852,42 @@ def create_app() -> FastAPI:
         resolved_mode = _resolve_mode(db, mode)
         summary = _compute_summary(db, resolved_mode)
         return _json_success(data=summary.model_dump(), request_id=_request_id_from(request))
+
+    @app.get("/api/performance/review")
+    async def get_performance_review(
+        request: Request,
+        mode: Optional[str] = Query(default=None, description="PAPER|LIVE"),
+        days: int = Query(default=7, ge=1, le=365),
+        min_trades: int = Query(default=20, ge=1, le=500),
+        include_ai: bool = Query(default=True),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        resolved_mode = _resolve_mode(db, mode)
+        is_sim = resolved_mode == "PAPER"
+        try:
+            strategist = _get_strategist()
+            payload = strategist.analyze_performance_overview(
+                days_range=days,
+                is_sim=is_sim,
+                min_trades=min_trades,
+                include_ai=include_ai,
+            )
+            payload["mode"] = resolved_mode
+            return _json_success(data=payload, request_id=_request_id_from(request))
+        except Exception as exc:
+            raise APIRequestError(
+                code=ErrorCode.E_UPSTREAM_AI_503,
+                message="performance review service unavailable",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                details={"reason": str(exc)[:300]},
+            )
 
     @app.get("/api/candidates")
     async def get_candidates(
