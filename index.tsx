@@ -40,6 +40,18 @@ type SummaryData = {
   bot_status: string;
   bot_status_detail?: string | null;
   heartbeat_age_sec?: number | null;
+  last_heartbeat_at?: string | null;
+  uptime_sec?: number | null;
+};
+
+type ControlStateData = {
+  trading_mode: "PAPER" | "LIVE";
+  bot_status: string;
+  bot_status_detail?: string | null;
+  heartbeat_age_sec?: number | null;
+  last_heartbeat_at?: string | null;
+  uptime_sec?: number | null;
+  latest_update_on?: string | null;
 };
 
 type CandidateData = {
@@ -134,6 +146,7 @@ const TAB_ITEMS: Array<{ id: TabId; label: string }> = [
 const DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"];
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 const POLL_INTERVALS = {
+  control: 10000,
   summary: 10000,
   events: 15000,
   signals: 20000,
@@ -144,13 +157,30 @@ const POLL_INTERVALS = {
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.toString().trim() ||
-  (typeof window !== "undefined" && window.location.port === "3000"
-    ? "http://localhost:8000"
-    : typeof window !== "undefined"
-      ? window.location.origin
-      : "http://localhost:8000");
+  (typeof window !== "undefined"
+    ? (() => {
+        const { hostname, port, origin } = window.location;
+        const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
+        if (isLocal && port !== "8000") {
+          return `http://${hostname}:8000`;
+        }
+        return origin;
+      })()
+    : "http://localhost:8000");
 
 const API_KEY = import.meta.env.VITE_API_KEY?.toString().trim() || "";
+
+const BOT_STATUS_DEFINITIONS: Record<string, string> = {
+  ACTIVE: "บอททำงานปกติ",
+  DEGRADED: "ทำงานได้แต่มีปัญหาบางส่วน",
+  PAUSED: "หยุดส่งออเดอร์ชั่วคราว",
+  STOPPED: "หยุดระบบเทรด",
+  ERROR: "ระบบล้มเหลว ต้องตรวจ log",
+  IDLE: "ยังไม่เริ่มรอบเทรด",
+  STARTING: "กำลังเริ่มบริการบอท",
+  LOADING: "กำลังโหลดสถานะระบบ",
+  OFFLINE: "ไม่สามารถเชื่อมต่อ backend ได้",
+};
 
 function normalizeTopicSymbol(symbol: string): string {
   return symbol.replace("/", "").toUpperCase();
@@ -185,6 +215,18 @@ function formatHeartbeatAge(seconds: number | null | undefined): string {
   return `${Math.floor(age / 3600)}h ${Math.floor((age % 3600) / 60)}m`;
 }
 
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "-";
+  const value = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  const mins = Math.floor((value % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  if (mins > 0) return `${mins}m`;
+  return `${value}s`;
+}
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -205,6 +247,28 @@ async function apiGet<T>(
   if (API_KEY) headers["X-API-Key"] = API_KEY;
 
   const response = await fetch(url.toString(), { headers });
+  const body = (await response.json()) as ApiEnvelope<T>;
+  if (!response.ok || !body.success) {
+    const errorText = body.error?.message || `HTTP ${response.status}`;
+    throw new Error(errorText);
+  }
+  return body.data;
+}
+
+async function apiPost<T>(
+  path: string,
+  params?: Record<string, string | number | boolean | null | undefined>,
+): Promise<T> {
+  const url = new URL(path, API_BASE_URL);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+
+  const headers: Record<string, string> = {};
+  if (API_KEY) headers["X-API-Key"] = API_KEY;
+
+  const response = await fetch(url.toString(), { method: "POST", headers });
   const body = (await response.json()) as ApiEnvelope<T>;
   if (!response.ok || !body.success) {
     const errorText = body.error?.message || `HTTP ${response.status}`;
@@ -529,17 +593,33 @@ function ChartPanel({ symbol, tf }: { symbol: string; tf: string }) {
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
-  const [mode, setMode] = useState<"PAPER" | "LIVE">("PAPER");
+  const [pendingMode, setPendingMode] = useState<"PAPER" | "LIVE">("PAPER");
+  const [modeDirty, setModeDirty] = useState(false);
   const [symbol, setSymbol] = useState("BTC/USDT");
   const [tf, setTf] = useState("1h");
   const [sessionId, setSessionId] = useState("");
+  const [controlBusy, setControlBusy] = useState<null | "start" | "pause" | "stop" | "mode">(null);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [controlMessage, setControlMessage] = useState<string | null>(null);
 
   const isOverviewTab = activeTab === "overview";
   const isCandidatesTab = activeTab === "candidates";
   const isSignalsTab = activeTab === "signals";
   const isPositionsTab = activeTab === "positions";
 
-  const summaryFetcher = useCallback(() => apiGet<SummaryData>("/api/dashboard/summary", { mode }), [mode]);
+  const controlFetcher = useCallback(() => apiGet<ControlStateData>("/api/control/state"), []);
+  const control = usePollingResource(controlFetcher, POLL_INTERVALS.control, true);
+  const activeMode = ((control.data?.trading_mode || "PAPER").toUpperCase() === "LIVE" ? "LIVE" : "PAPER") as
+    | "PAPER"
+    | "LIVE";
+
+  useEffect(() => {
+    if (!modeDirty) {
+      setPendingMode(activeMode);
+    }
+  }, [activeMode, modeDirty]);
+
+  const summaryFetcher = useCallback(() => apiGet<SummaryData>("/api/dashboard/summary", { mode: activeMode }), [activeMode]);
   const candidatesFetcher = useCallback(() => apiGet<CandidateData[]>("/api/candidates", { limit: 40 }), []);
   const signalsFetcher = useCallback(() => apiGet<SignalData[]>("/api/signals", { limit: 60, symbol }), [symbol]);
   const positionsFetcher = useCallback(
@@ -572,12 +652,22 @@ function App() {
       : "LOADING";
   const botStatusClass = (() => {
     if (botStatus === "ACTIVE") return "status-good";
-    if (botStatus === "DEGRADED" || botStatus === "STARTING") return "status-warn";
+    if (botStatus === "DEGRADED" || botStatus === "STARTING" || botStatus === "PAUSED") return "status-warn";
     if (botStatus === "STOPPED" || botStatus === "ERROR" || botStatus === "OFFLINE") return "status-bad";
     return "status-neutral";
   })();
+  const botStatusReason =
+    botStatus === "ACTIVE"
+      ? "System healthy and trading loop operational."
+      : summary.data?.bot_status_detail || control.data?.bot_status_detail || "No detailed reason reported";
+  const botStatusDefinition = BOT_STATUS_DEFINITIONS[botStatus] || "Unknown status";
+  const botStatusTooltip =
+    botStatus === "ACTIVE"
+      ? `Definition: ${botStatusDefinition}\nCurrent reason: Normal operation`
+      : `Definition: ${botStatusDefinition}\nCurrent reason: ${botStatusReason}`;
 
   const handleRefresh = useCallback(() => {
+    control.refresh();
     summary.refresh();
     if (isOverviewTab) {
       events.refresh();
@@ -590,6 +680,7 @@ function App() {
       orders.refresh();
     }
   }, [
+    control,
     summary,
     events,
     overviewTrades,
@@ -602,6 +693,59 @@ function App() {
     isSignalsTab,
     isPositionsTab,
   ]);
+
+  const runControlAction = useCallback(
+    async (action: "start" | "pause" | "stop") => {
+      if (action === "stop" && !window.confirm("Stop trading now? This halts all new trade execution.")) {
+        return;
+      }
+      if (action === "pause" && !window.confirm("Pause trading now? New orders will be skipped until resumed.")) {
+        return;
+      }
+      setControlBusy(action);
+      setControlError(null);
+      setControlMessage(null);
+      try {
+        await apiPost<ControlStateData>("/api/control/action", {
+          action,
+          actor: "dashboard",
+        });
+        setControlMessage(`Trading action applied: ${action.toUpperCase()}`);
+        handleRefresh();
+      } catch (err) {
+        setControlError(toErrorMessage(err));
+      } finally {
+        setControlBusy(null);
+      }
+    },
+    [handleRefresh],
+  );
+
+  const applyModeChange = useCallback(async () => {
+    if (!modeDirty || pendingMode === activeMode) return;
+    if (!window.confirm(`Apply trading mode to ${pendingMode}?`)) return;
+    if (pendingMode === "LIVE") {
+      const secondConfirm = window.confirm("LIVE mode can execute real orders. Confirm again to proceed.");
+      if (!secondConfirm) return;
+    }
+    setControlBusy("mode");
+    setControlError(null);
+    setControlMessage(null);
+    try {
+      await apiPost<ControlStateData>("/api/control/mode", {
+        mode: pendingMode,
+        confirm_live: pendingMode === "LIVE",
+        actor: "dashboard",
+      });
+      setModeDirty(false);
+      setControlMessage(`Trading mode switched to ${pendingMode}`);
+      handleRefresh();
+    } catch (err) {
+      setControlError(toErrorMessage(err));
+    } finally {
+      setControlBusy(null);
+    }
+  }, [activeMode, handleRefresh, modeDirty, pendingMode]);
 
   const symbolOptions = useMemo(() => {
     const fromCandidates = (candidates.data || []).map((item) => item.symbol);
@@ -616,45 +760,126 @@ function App() {
     return (overviewTrades.data || []).find((item) => !item.is_open) || null;
   }, [overviewTrades.data]);
 
+  const heartbeatAgeLabel = formatHeartbeatAge(summary.data?.heartbeat_age_sec);
+  const heartbeatAtLabel = formatDateTime(summary.data?.last_heartbeat_at || control.data?.last_heartbeat_at || null);
+  const uptimeLabel = formatDuration(summary.data?.uptime_sec ?? control.data?.uptime_sec);
+  const latestUpdateLabel = summary.lastUpdated ? new Date(summary.lastUpdated).toLocaleString() : "-";
+
   return (
     <div className="layout">
+      <nav className="tabbar top-tabbar">
+        {TAB_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            className={activeTab === item.id ? "active" : ""}
+            onClick={() => setActiveTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
       <header className="topbar">
         <div>
           <h1>Zenith Mission Control</h1>
-          <p>React dashboard for operations, scan, signals, positions, and chart stream</p>
+          <p>Ops cockpit for scan, signals, execution, risk, and live status.</p>
         </div>
         <div className="topbar-actions">
           <button onClick={handleRefresh}>Refresh</button>
         </div>
       </header>
 
-      <section className="health-strip">
-        <div className="health-item">
-          <span>Mode</span>
-          <strong>{mode}</strong>
+      <section className="command-grid">
+        <div className="command-card">
+          <div className="command-label">Trading Mode</div>
+          <div className={`mode-chip ${activeMode === "LIVE" ? "mode-live" : "mode-paper"}`}>{activeMode}</div>
+          <div className="command-subtle">
+            {activeMode === "LIVE" ? "Real orders enabled" : "Paper simulation only"}
+          </div>
         </div>
-        <div className="health-item">
-          <span>Bot Status</span>
+        <div className="command-card">
+          <div className="status-headline">
+            <span className="command-label">Bot Status</span>
+            <button className="info-dot" title={botStatusTooltip} aria-label="bot status explanation">
+              ?
+            </button>
+          </div>
           <strong className={`status-chip ${botStatusClass}`}>{botStatus}</strong>
+          <div className="status-reason">{botStatusReason}</div>
         </div>
-        <div className="health-item">
-          <span>Heartbeat</span>
-          <strong>{formatHeartbeatAge(summary.data?.heartbeat_age_sec)}</strong>
+        <div className="command-card">
+          <div className="command-label">Trading Controls</div>
+          <div className="control-actions">
+            <button
+              className="control-btn start"
+              onClick={() => runControlAction("start")}
+              disabled={controlBusy !== null}
+            >
+              Start
+            </button>
+            <button
+              className="control-btn pause"
+              onClick={() => runControlAction("pause")}
+              disabled={controlBusy !== null}
+            >
+              Pause
+            </button>
+            <button
+              className="control-btn stop"
+              onClick={() => runControlAction("stop")}
+              disabled={controlBusy !== null}
+            >
+              Stop
+            </button>
+          </div>
+          <div className="mode-apply">
+            <label htmlFor="target-mode">Target mode</label>
+            <div className="mode-apply-row">
+              <select
+                id="target-mode"
+                value={pendingMode}
+                onChange={(event) => {
+                  const nextMode = event.target.value as "PAPER" | "LIVE";
+                  setPendingMode(nextMode);
+                  setModeDirty(nextMode !== activeMode);
+                }}
+                disabled={controlBusy !== null}
+              >
+                <option value="PAPER">PAPER</option>
+                <option value="LIVE">LIVE</option>
+              </select>
+              <button onClick={applyModeChange} disabled={controlBusy !== null || !modeDirty}>
+                Apply Mode
+              </button>
+            </div>
+          </div>
+          <div className="control-note">Mode changes require explicit confirmation.</div>
         </div>
-        <div className="health-item">
-          <span>Updated</span>
-          <strong>{summary.lastUpdated ? new Date(summary.lastUpdated).toLocaleTimeString() : "-"}</strong>
+      </section>
+
+      {controlError || control.error ? <div className="error-banner">{controlError || control.error}</div> : null}
+      {controlMessage ? <div className="status-detail">{controlMessage}</div> : null}
+
+      <section className="meta-strip">
+        <div className="meta-item">
+          <span>Last heartbeat</span>
+          <strong>{heartbeatAtLabel}</strong>
+        </div>
+        <div className="meta-item">
+          <span>Heartbeat age</span>
+          <strong>{heartbeatAgeLabel}</strong>
+        </div>
+        <div className="meta-item">
+          <span>Uptime since last restart</span>
+          <strong>{uptimeLabel}</strong>
+        </div>
+        <div className="meta-item">
+          <span>Latest update on:</span>
+          <strong>{latestUpdateLabel}</strong>
         </div>
       </section>
 
       <section className="toolbar">
-        <label>
-          Mode
-          <select value={mode} onChange={(event) => setMode(event.target.value as "PAPER" | "LIVE")}>
-            <option value="PAPER">PAPER</option>
-            <option value="LIVE">LIVE</option>
-          </select>
-        </label>
         <label>
           Symbol
           <select value={symbol} onChange={(event) => setSymbol(event.target.value)}>
@@ -675,57 +900,26 @@ function App() {
             ))}
           </select>
         </label>
-        <label>
-          Session
-          <input
-            value={sessionId}
-            onChange={(event) => setSessionId(event.target.value)}
-            placeholder="optional session id"
-          />
-        </label>
-        <div className="toolbar-note">{summary.syncing ? "syncing..." : summary.lastUpdated ? `updated ${new Date(summary.lastUpdated).toLocaleTimeString()}` : ""}</div>
+        <div className="toolbar-note">{summary.syncing ? "syncing..." : "ready"}</div>
       </section>
-
-      <nav className="tabbar">
-        {TAB_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            className={activeTab === item.id ? "active" : ""}
-            onClick={() => setActiveTab(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
+      <details className="advanced-filters">
+        <summary>Advanced filters</summary>
+        <div className="advanced-filters-body">
+          <label>
+            Session ID filter
+            <input
+              value={sessionId}
+              onChange={(event) => setSessionId(event.target.value)}
+              placeholder="e.g. 123e4567-e89b-12d3-a456-426614174000"
+            />
+          </label>
+          <div className="filter-help">ว่างไว้ = ใช้ active session ล่าสุด</div>
+        </div>
+      </details>
 
       {isOverviewTab ? (
         <section className="content">
           {summary.error ? <div className="error-banner">{summary.error}</div> : null}
-          {summary.data?.bot_status_detail ? <div className="status-detail">{summary.data.bot_status_detail}</div> : null}
-          <div className="kpi-grid">
-            <SummaryCard title="Equity" value={`$${summary.data ? formatMoney(summary.data.equity) : "-"}`} />
-            <SummaryCard
-              title="Daily PnL"
-              value={`$${summary.data ? formatMoney(summary.data.daily_pnl) : "-"}`}
-              tone={summary.data && summary.data.daily_pnl < 0 ? "bad" : "good"}
-            />
-            <SummaryCard
-              title="Drawdown"
-              value={summary.data ? formatPct(summary.data.drawdown_pct) : "-"}
-              tone={summary.data && summary.data.drawdown_pct > 6 ? "bad" : "neutral"}
-            />
-            <SummaryCard
-              title="Win Rate"
-              value={summary.data ? formatPct(summary.data.win_rate) : "-"}
-              tone={summary.data && summary.data.win_rate >= 50 ? "good" : "bad"}
-            />
-            <SummaryCard
-              title="Open Positions"
-              value={summary.data ? String(summary.data.open_positions) : "-"}
-              tone="neutral"
-            />
-            <SummaryCard title="Bot Status" value={botStatus} tone="neutral" />
-          </div>
 
           <div className="two-panels overview-panels">
             <div className="panel">
@@ -733,8 +927,9 @@ function App() {
                 <h3>System Events</h3>
                 {events.syncing ? <span className="subtle-status">syncing...</span> : null}
               </div>
+              {summary.data?.bot_status_detail ? <div className="status-detail inline">{summary.data.bot_status_detail}</div> : null}
               {events.error ? <div className="error-banner">{events.error}</div> : null}
-              <div className="table-wrap">
+              <div className="table-wrap event-table-scroll">
                 <table>
                   <thead>
                     <tr>
@@ -829,6 +1024,31 @@ function App() {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="kpi-grid">
+            <SummaryCard title="Equity" value={`$${summary.data ? formatMoney(summary.data.equity) : "-"}`} />
+            <SummaryCard
+              title="Daily PnL"
+              value={`$${summary.data ? formatMoney(summary.data.daily_pnl) : "-"}`}
+              tone={summary.data && summary.data.daily_pnl < 0 ? "bad" : "good"}
+            />
+            <SummaryCard
+              title="Drawdown"
+              value={summary.data ? formatPct(summary.data.drawdown_pct) : "-"}
+              tone={summary.data && summary.data.drawdown_pct > 6 ? "bad" : "neutral"}
+            />
+            <SummaryCard
+              title="Win Rate"
+              value={summary.data ? formatPct(summary.data.win_rate) : "-"}
+              tone={summary.data && summary.data.win_rate >= 50 ? "good" : "bad"}
+            />
+            <SummaryCard
+              title="Open Positions"
+              value={summary.data ? String(summary.data.open_positions) : "-"}
+              tone="neutral"
+            />
+            <SummaryCard title="Bot Status" value={botStatus} tone="neutral" />
           </div>
         </section>
       ) : null}

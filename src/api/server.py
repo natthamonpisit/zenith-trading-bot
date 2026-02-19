@@ -153,15 +153,97 @@ def _fetch_bot_config_value(db: Any, key: str) -> Optional[Any]:
     return None
 
 
-def _get_heartbeat_age_seconds(db: Any) -> Optional[int]:
+def _upsert_bot_config_value(db: Any, key: str, value: Any) -> None:
+    db.table("bot_config").upsert({"key": key, "value": value}).execute()
+
+
+def _get_config_timestamp_seconds(db: Any, key: str) -> Optional[float]:
+    raw = _fetch_bot_config_value(db, key)
+    ts = _to_float(raw, default=0.0)
+    if ts <= 0:
+        return None
+    return ts
+
+
+def _format_unix_ts_iso(ts: Optional[float]) -> Optional[str]:
+    if ts is None:
+        return None
     try:
-        raw = _fetch_bot_config_value(db, "LAST_HEARTBEAT")
-        ts = _to_float(raw, default=0.0)
-        if ts <= 0:
-            return None
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _get_heartbeat_age_seconds(db: Any) -> Optional[int]:
+    ts = _get_config_timestamp_seconds(db, "LAST_HEARTBEAT")
+    if ts is None:
+        return None
+    try:
         return int(max(0.0, datetime.now(timezone.utc).timestamp() - ts))
     except Exception:
         return None
+
+
+def _get_heartbeat_timestamp_iso(db: Any) -> Optional[str]:
+    return _format_unix_ts_iso(_get_config_timestamp_seconds(db, "LAST_HEARTBEAT"))
+
+
+def _get_uptime_seconds(db: Any) -> Optional[int]:
+    ts = _get_config_timestamp_seconds(db, "BOT_START_TIME")
+    if ts is None:
+        return None
+    try:
+        return int(max(0.0, datetime.now(timezone.utc).timestamp() - ts))
+    except Exception:
+        return None
+
+
+def _set_bot_status(db: Any, status_value: str, detail: Optional[str] = None) -> str:
+    normalized = str(status_value or "").strip().upper()
+    allowed = {"STARTING", "ACTIVE", "PAUSED", "STOPPED", "DEGRADED", "ERROR", "IDLE"}
+    if normalized not in allowed:
+        raise APIRequestError(
+            code=ErrorCode.E_VALIDATION_400,
+            message="unsupported bot status value",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            details={"status": status_value, "allowed": sorted(allowed)},
+        )
+
+    _upsert_bot_config_value(db, "BOT_STATUS", normalized)
+    if detail is not None:
+        _upsert_bot_config_value(db, "BOT_STATUS_DETAIL", str(detail))
+    return normalized
+
+
+def _set_trading_mode(db: Any, mode_value: str) -> str:
+    normalized = str(mode_value or "").strip().upper()
+    if normalized not in {"PAPER", "LIVE"}:
+        raise APIRequestError(
+            code=ErrorCode.E_VALIDATION_400,
+            message="mode must be PAPER or LIVE",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            details={"mode": mode_value},
+        )
+    _upsert_bot_config_value(db, "TRADING_MODE", normalized)
+    _upsert_bot_config_value(db, "MODE", normalized)
+    return normalized
+
+
+def _get_control_state_payload(db: Any) -> Dict[str, Any]:
+    mode = _resolve_mode(db, None)
+    bot_status = _derive_bot_status(db, mode)
+    detail_raw = _fetch_bot_config_value(db, "BOT_STATUS_DETAIL")
+    detail = _clean_cfg_value(detail_raw, default="")
+
+    return {
+        "trading_mode": mode,
+        "bot_status": bot_status,
+        "bot_status_detail": detail or None,
+        "heartbeat_age_sec": _get_heartbeat_age_seconds(db),
+        "last_heartbeat_at": _get_heartbeat_timestamp_iso(db),
+        "uptime_sec": _get_uptime_seconds(db),
+        "latest_update_on": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _has_active_session(db: Any, mode: str) -> bool:
@@ -313,6 +395,8 @@ def _compute_summary(db: Any, mode: str) -> SummaryDTO:
     bot_status_detail_raw = _fetch_bot_config_value(db, "BOT_STATUS_DETAIL")
     bot_status_detail = _clean_cfg_value(bot_status_detail_raw, default="")
     heartbeat_age_sec = _get_heartbeat_age_seconds(db)
+    last_heartbeat_at = _get_heartbeat_timestamp_iso(db)
+    uptime_sec = _get_uptime_seconds(db)
 
     return SummaryDTO(
         equity=round(equity, 4),
@@ -323,6 +407,8 @@ def _compute_summary(db: Any, mode: str) -> SummaryDTO:
         bot_status=bot_status,
         bot_status_detail=bot_status_detail or None,
         heartbeat_age_sec=heartbeat_age_sec,
+        last_heartbeat_at=last_heartbeat_at,
+        uptime_sec=uptime_sec,
     )
 
 
@@ -912,6 +998,84 @@ def create_app() -> FastAPI:
         resolved_mode = _resolve_mode(db, mode)
         summary = _compute_summary(db, resolved_mode)
         return _json_success(data=summary.model_dump(), request_id=_request_id_from(request))
+
+    @app.get("/api/control/state")
+    async def get_control_state(request: Request):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        payload = _get_control_state_payload(db)
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.post("/api/control/action")
+    async def post_control_action(
+        request: Request,
+        action: str = Query(..., min_length=3, max_length=20),
+        reason: Optional[str] = Query(default=None, max_length=240),
+        actor: str = Query(default="dashboard", min_length=2, max_length=40),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        normalized_action = action.strip().lower()
+        action_map = {
+            "start": ("ACTIVE", "▶️ Trading started by operator"),
+            "pause": ("PAUSED", "⏸️ Trading paused by operator"),
+            "stop": ("STOPPED", "⛔ Trading stopped by operator"),
+        }
+        if normalized_action not in action_map:
+            raise APIRequestError(
+                code=ErrorCode.E_VALIDATION_400,
+                message="unsupported control action",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                details={"action": action, "allowed": sorted(action_map.keys())},
+            )
+
+        target_status, default_reason = action_map[normalized_action]
+        detail = reason or f"{default_reason} ({actor})"
+        _set_bot_status(db, target_status, detail=detail)
+        payload = _get_control_state_payload(db)
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.post("/api/control/mode")
+    async def post_control_mode(
+        request: Request,
+        mode: str = Query(..., min_length=4, max_length=10),
+        confirm_live: bool = Query(default=False),
+        actor: str = Query(default="dashboard", min_length=2, max_length=40),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        normalized_mode = mode.strip().upper()
+        if normalized_mode == "LIVE" and not confirm_live:
+            raise APIRequestError(
+                code=ErrorCode.E_VALIDATION_400,
+                message="confirm_live is required when switching to LIVE mode",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                details={"mode": mode},
+            )
+
+        applied_mode = _set_trading_mode(db, normalized_mode)
+        detail = f"🎛️ Trading mode switched to {applied_mode} by {actor}"
+        _upsert_bot_config_value(db, "BOT_STATUS_DETAIL", detail)
+        payload = _get_control_state_payload(db)
+        return _json_success(data=payload, request_id=_request_id_from(request))
 
     @app.get("/api/performance/review")
     async def get_performance_review(

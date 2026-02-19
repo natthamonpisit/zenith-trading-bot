@@ -377,3 +377,100 @@ def test_cutover_apply_validation_error(monkeypatch):
     response = client.post("/api/cutover/apply", params={"primary_dashboard": "BAD"})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "E_VALIDATION_400"
+
+
+def test_control_state_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+    monkeypatch.setattr(
+        "src.api.server._get_control_state_payload",
+        lambda db: {
+            "trading_mode": "PAPER",
+            "bot_status": "ACTIVE",
+            "bot_status_detail": "ok",
+            "heartbeat_age_sec": 4,
+            "last_heartbeat_at": "2026-02-19T00:00:00+00:00",
+            "uptime_sec": 1800,
+            "latest_update_on": "2026-02-19T00:00:01+00:00",
+        },
+    )
+
+    response = client.get("/api/control/state")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["trading_mode"] == "PAPER"
+    assert body["data"]["bot_status"] == "ACTIVE"
+
+
+def test_control_action_sets_status_and_returns_payload(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+
+    captured = {}
+
+    def fake_set_bot_status(db, status_value, detail=None):
+        captured["status"] = status_value
+        captured["detail"] = detail
+        return status_value
+
+    monkeypatch.setattr("src.api.server._set_bot_status", fake_set_bot_status)
+    monkeypatch.setattr(
+        "src.api.server._get_control_state_payload",
+        lambda db: {
+            "trading_mode": "PAPER",
+            "bot_status": captured.get("status", "UNKNOWN"),
+            "bot_status_detail": captured.get("detail"),
+        },
+    )
+
+    response = client.post("/api/control/action", params={"action": "pause", "actor": "tester"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert captured["status"] == "PAUSED"
+    assert "tester" in captured["detail"]
+    assert body["data"]["bot_status"] == "PAUSED"
+
+
+def test_control_mode_requires_confirm_live(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+
+    response = client.post("/api/control/mode", params={"mode": "LIVE", "confirm_live": "false"})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "E_VALIDATION_400"
+
+
+def test_control_mode_switches_and_sets_status_detail(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+
+    calls = {"mode": None, "upserts": []}
+
+    def fake_set_trading_mode(db, mode_value):
+        calls["mode"] = mode_value
+        return "LIVE"
+
+    def fake_upsert(db, key, value):
+        calls["upserts"].append((key, value))
+
+    monkeypatch.setattr("src.api.server._set_trading_mode", fake_set_trading_mode)
+    monkeypatch.setattr("src.api.server._upsert_bot_config_value", fake_upsert)
+    monkeypatch.setattr(
+        "src.api.server._get_control_state_payload",
+        lambda db: {"trading_mode": "LIVE", "bot_status": "ACTIVE", "bot_status_detail": "ok"},
+    )
+
+    response = client.post("/api/control/mode", params={"mode": "LIVE", "confirm_live": "true", "actor": "tester"})
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert calls["mode"] == "LIVE"
+    assert calls["upserts"]
+    key, value = calls["upserts"][0]
+    assert key == "BOT_STATUS_DETAIL"
+    assert "LIVE" in value

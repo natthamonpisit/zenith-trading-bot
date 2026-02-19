@@ -67,6 +67,8 @@ class SummaryDTO(BaseModel):
     bot_status: str = Field(min_length=3, max_length=30)
     bot_status_detail: Optional[str] = Field(default=None, max_length=300)
     heartbeat_age_sec: Optional[int] = Field(default=None, ge=0)
+    last_heartbeat_at: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    uptime_sec: Optional[int] = Field(default=None, ge=0)
 
 
 class CandidateDTO(BaseModel):

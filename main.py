@@ -76,16 +76,21 @@ def is_ai_tiering_enabled():
     raw = str(get_config_value("ENABLE_AI_TIERING", "false")).lower()
     return raw in ("1", "true", "yes")
 
-def is_bot_stopped():
-    """Check if the bot has been stopped via dashboard Emergency Stop."""
+def get_bot_runtime_status():
+    """Read runtime status from DB; defaults to ACTIVE when unavailable."""
     try:
         status = db.table("bot_config").select("value").eq("key", "BOT_STATUS").execute()
         if status.data:
-            val = str(status.data[0]['value']).replace('"', '').strip()
-            return val == "STOPPED"
+            val = str(status.data[0]['value']).replace('"', '').strip().upper()
+            if val:
+                return val
     except Exception as e:
         print(f"BOT_STATUS check error: {e}")
-    return False
+    return "ACTIVE"
+
+
+def is_trading_halted():
+    return get_bot_runtime_status() in {"STOPPED", "PAUSED"}
 
 def log_activity(role, message, level="INFO"):
     print(f"[{role}] {message}") 
@@ -103,8 +108,9 @@ def process_pair(pair, timeframe, intent="ENTRY"):
     Encapsulated logic for a single trading pair with explicit INTENT.
     :param intent: "ENTRY" (Look for BUY) or "EXIT" (Look for SELL)
     """
-    if is_bot_stopped():
-        print(f"⛔ Bot STOPPED. Skipping {pair}.")
+    runtime_status = get_bot_runtime_status()
+    if runtime_status in {"STOPPED", "PAUSED"}:
+        print(f"⛔ Bot {runtime_status}. Skipping {pair}.")
         return
     try:
         # 1. SPY A (Price)
@@ -363,7 +369,7 @@ def update_status_db(msg):
 def set_bot_status(status, detail=None):
     """Persist high-level runtime status for dashboard/API summary."""
     normalized = str(status or "").strip().upper()
-    allowed = {"STARTING", "ACTIVE", "STOPPED", "DEGRADED", "ERROR"}
+    allowed = {"STARTING", "ACTIVE", "PAUSED", "STOPPED", "DEGRADED", "ERROR", "IDLE"}
     if normalized not in allowed:
         normalized = "ACTIVE"
     try:
@@ -591,9 +597,14 @@ def run_trading_cycle():
     """PHASE 2: SNIPER (Execution) - Runs frequently"""
     set_heartbeat()
 
-    if is_bot_stopped():
+    runtime_status = get_bot_runtime_status()
+    if runtime_status == "STOPPED":
         set_bot_status("STOPPED", "⛔ Bot stopped by operator")
         log_activity("System", "⛔ Bot is STOPPED. Skipping trading cycle.", "WARNING")
+        return
+    if runtime_status == "PAUSED":
+        set_bot_status("PAUSED", "⏸️ Bot paused by operator")
+        log_activity("System", "⏸️ Bot is PAUSED. Skipping trading cycle.", "WARNING")
         return
     set_bot_status("ACTIVE")
 
