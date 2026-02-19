@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import {
+  CandlestickSeries,
   ColorType,
   createChart,
   type CandlestickData,
@@ -37,6 +38,8 @@ type SummaryData = {
   open_positions: number;
   win_rate: number;
   bot_status: string;
+  bot_status_detail?: string | null;
+  heartbeat_age_sec?: number | null;
 };
 
 type CandidateData = {
@@ -67,6 +70,8 @@ type PositionData = {
   realized_pnl: number;
   is_open: boolean;
   exit_reason: string | null;
+  session_id?: string | null;
+  is_sim?: boolean;
   created_at: string | null;
   opened_at: string | null;
   closed_at: string | null;
@@ -128,6 +133,14 @@ const TAB_ITEMS: Array<{ id: TabId; label: string }> = [
 
 const DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"];
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const POLL_INTERVALS = {
+  summary: 10000,
+  events: 15000,
+  signals: 20000,
+  positions: 20000,
+  orders: 20000,
+  candidates: 30000,
+} as const;
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.toString().trim() ||
@@ -158,6 +171,20 @@ function formatPct(value: number): string {
   return `${value.toFixed(2)}%`;
 }
 
+function normalizeBotStatus(value: string | null | undefined): string {
+  return String(value || "UNKNOWN").toUpperCase();
+}
+
+function formatHeartbeatAge(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return "-";
+  }
+  const age = Math.max(0, Math.floor(seconds));
+  if (age < 60) return `${age}s`;
+  if (age < 3600) return `${Math.floor(age / 60)}m`;
+  return `${Math.floor(age / 3600)}h ${Math.floor((age % 3600) / 60)}m`;
+}
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -186,7 +213,7 @@ async function apiGet<T>(
   return body.data;
 }
 
-function usePollingResource<T>(fetcher: () => Promise<T>, intervalMs: number): PollResult<T> {
+function usePollingResource<T>(fetcher: () => Promise<T>, intervalMs: number, enabled = true): PollResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -225,11 +252,16 @@ function usePollingResource<T>(fetcher: () => Promise<T>, intervalMs: number): P
   );
 
   useEffect(() => {
-    hasDataRef.current = false;
-    setLoading(true);
+    if (!enabled) {
+      requestSeqRef.current += 1;
+      setLoading(false);
+      setSyncing(false);
+      return;
+    }
+
     setSyncing(false);
     setError(null);
-    runFetch(false);
+    runFetch(Boolean(hasDataRef.current));
     const timer = window.setInterval(() => {
       runFetch(true);
     }, intervalMs);
@@ -237,7 +269,7 @@ function usePollingResource<T>(fetcher: () => Promise<T>, intervalMs: number): P
       requestSeqRef.current += 1;
       window.clearInterval(timer);
     };
-  }, [intervalMs, runFetch]);
+  }, [enabled, intervalMs, runFetch]);
 
   const refresh = useCallback(() => {
     runFetch(Boolean(hasDataRef.current));
@@ -446,7 +478,7 @@ function ChartPanel({ symbol, tf }: { symbol: string; tf: string }) {
       },
     });
 
-    const series = chart.addCandlestickSeries({
+    const series = chart.addSeries(CandlestickSeries, {
       upColor: "#10b981",
       downColor: "#ef4444",
       wickUpColor: "#10b981",
@@ -502,6 +534,11 @@ function App() {
   const [tf, setTf] = useState("1h");
   const [sessionId, setSessionId] = useState("");
 
+  const isOverviewTab = activeTab === "overview";
+  const isCandidatesTab = activeTab === "candidates";
+  const isSignalsTab = activeTab === "signals";
+  const isPositionsTab = activeTab === "positions";
+
   const summaryFetcher = useCallback(() => apiGet<SummaryData>("/api/dashboard/summary", { mode }), [mode]);
   const candidatesFetcher = useCallback(() => apiGet<CandidateData[]>("/api/candidates", { limit: 40 }), []);
   const signalsFetcher = useCallback(() => apiGet<SignalData[]>("/api/signals", { limit: 60, symbol }), [symbol]);
@@ -509,20 +546,75 @@ function App() {
     () => apiGet<PositionData[]>("/api/positions", { limit: 60, symbol, session_id: sessionId }),
     [sessionId, symbol],
   );
+  const overviewTradesFetcher = useCallback(
+    () =>
+      apiGet<PositionData[]>("/api/positions", {
+        limit: 30,
+        session_id: sessionId,
+      }),
+    [sessionId],
+  );
   const ordersFetcher = useCallback(() => apiGet<OrderData[]>("/api/orders", { limit: 40, symbol }), [symbol]);
   const eventsFetcher = useCallback(() => apiGet<EventData[]>("/api/events", { limit: 12 }), []);
 
-  const summary = usePollingResource(summaryFetcher, 5000);
-  const candidates = usePollingResource(candidatesFetcher, 15000);
-  const signals = usePollingResource(signalsFetcher, 7000);
-  const positions = usePollingResource(positionsFetcher, 7000);
-  const orders = usePollingResource(ordersFetcher, 9000);
-  const events = usePollingResource(eventsFetcher, 6000);
+  const summary = usePollingResource(summaryFetcher, POLL_INTERVALS.summary, true);
+  const candidates = usePollingResource(candidatesFetcher, POLL_INTERVALS.candidates, isCandidatesTab);
+  const signals = usePollingResource(signalsFetcher, POLL_INTERVALS.signals, isSignalsTab);
+  const positions = usePollingResource(positionsFetcher, POLL_INTERVALS.positions, isPositionsTab);
+  const orders = usePollingResource(ordersFetcher, POLL_INTERVALS.orders, isPositionsTab);
+  const events = usePollingResource(eventsFetcher, POLL_INTERVALS.events, isOverviewTab);
+  const overviewTrades = usePollingResource(overviewTradesFetcher, POLL_INTERVALS.positions, isOverviewTab);
+
+  const botStatus = summary.data
+    ? normalizeBotStatus(summary.data.bot_status)
+    : summary.error
+      ? "OFFLINE"
+      : "LOADING";
+  const botStatusClass = (() => {
+    if (botStatus === "ACTIVE") return "status-good";
+    if (botStatus === "DEGRADED" || botStatus === "STARTING") return "status-warn";
+    if (botStatus === "STOPPED" || botStatus === "ERROR" || botStatus === "OFFLINE") return "status-bad";
+    return "status-neutral";
+  })();
+
+  const handleRefresh = useCallback(() => {
+    summary.refresh();
+    if (isOverviewTab) {
+      events.refresh();
+      overviewTrades.refresh();
+    }
+    if (isCandidatesTab) candidates.refresh();
+    if (isSignalsTab) signals.refresh();
+    if (isPositionsTab) {
+      positions.refresh();
+      orders.refresh();
+    }
+  }, [
+    summary,
+    events,
+    overviewTrades,
+    candidates,
+    signals,
+    positions,
+    orders,
+    isOverviewTab,
+    isCandidatesTab,
+    isSignalsTab,
+    isPositionsTab,
+  ]);
 
   const symbolOptions = useMemo(() => {
     const fromCandidates = (candidates.data || []).map((item) => item.symbol);
     return Array.from(new Set([...DEFAULT_SYMBOLS, ...fromCandidates])).sort();
   }, [candidates.data]);
+
+  const currentOpenTrade = useMemo(() => {
+    return (overviewTrades.data || []).find((item) => item.is_open) || null;
+  }, [overviewTrades.data]);
+
+  const latestClosedTrade = useMemo(() => {
+    return (overviewTrades.data || []).find((item) => !item.is_open) || null;
+  }, [overviewTrades.data]);
 
   return (
     <div className="layout">
@@ -532,9 +624,28 @@ function App() {
           <p>React dashboard for operations, scan, signals, positions, and chart stream</p>
         </div>
         <div className="topbar-actions">
-          <button onClick={summary.refresh}>Refresh</button>
+          <button onClick={handleRefresh}>Refresh</button>
         </div>
       </header>
+
+      <section className="health-strip">
+        <div className="health-item">
+          <span>Mode</span>
+          <strong>{mode}</strong>
+        </div>
+        <div className="health-item">
+          <span>Bot Status</span>
+          <strong className={`status-chip ${botStatusClass}`}>{botStatus}</strong>
+        </div>
+        <div className="health-item">
+          <span>Heartbeat</span>
+          <strong>{formatHeartbeatAge(summary.data?.heartbeat_age_sec)}</strong>
+        </div>
+        <div className="health-item">
+          <span>Updated</span>
+          <strong>{summary.lastUpdated ? new Date(summary.lastUpdated).toLocaleTimeString() : "-"}</strong>
+        </div>
+      </section>
 
       <section className="toolbar">
         <label>
@@ -587,9 +698,10 @@ function App() {
         ))}
       </nav>
 
-      {activeTab === "overview" ? (
+      {isOverviewTab ? (
         <section className="content">
           {summary.error ? <div className="error-banner">{summary.error}</div> : null}
+          {summary.data?.bot_status_detail ? <div className="status-detail">{summary.data.bot_status_detail}</div> : null}
           <div className="kpi-grid">
             <SummaryCard title="Equity" value={`$${summary.data ? formatMoney(summary.data.equity) : "-"}`} />
             <SummaryCard
@@ -612,42 +724,116 @@ function App() {
               value={summary.data ? String(summary.data.open_positions) : "-"}
               tone="neutral"
             />
-            <SummaryCard title="Bot Status" value={summary.data ? summary.data.bot_status : "-"} tone="neutral" />
+            <SummaryCard title="Bot Status" value={botStatus} tone="neutral" />
           </div>
 
-          <div className="panel">
-            <div className="panel-head">
-              <h3>System Events</h3>
-              {events.syncing ? <span className="subtle-status">syncing...</span> : null}
-            </div>
-            {events.error ? <div className="error-banner">{events.error}</div> : null}
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Level</th>
-                    <th>Role</th>
-                    <th>Message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(events.data || []).map((item) => (
-                    <tr key={item.id}>
-                      <td>{formatDateTime(item.created_at)}</td>
-                      <td>{item.level}</td>
-                      <td>{item.role}</td>
-                      <td>{item.message}</td>
+          <div className="two-panels overview-panels">
+            <div className="panel">
+              <div className="panel-head">
+                <h3>System Events</h3>
+                {events.syncing ? <span className="subtle-status">syncing...</span> : null}
+              </div>
+              {events.error ? <div className="error-banner">{events.error}</div> : null}
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Level</th>
+                      <th>Role</th>
+                      <th>Message</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {(events.data || []).map((item) => (
+                      <tr key={item.id}>
+                        <td>{formatDateTime(item.created_at)}</td>
+                        <td>{item.level}</td>
+                        <td>{item.role}</td>
+                        <td>{item.message}</td>
+                      </tr>
+                    ))}
+                    {(events.data || []).length === 0 && !events.loading ? (
+                      <tr>
+                        <td colSpan={4} className="empty-row">
+                          No system events yet.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-head">
+                <h3>Current Trade</h3>
+                {overviewTrades.syncing ? <span className="subtle-status">syncing...</span> : null}
+              </div>
+              {overviewTrades.error ? <div className="error-banner">{overviewTrades.error}</div> : null}
+
+              {currentOpenTrade ? (
+                <div className="trade-focus">
+                  <div className="trade-title-row">
+                    <strong>{currentOpenTrade.symbol}</strong>
+                    <span className={`trade-side ${currentOpenTrade.side === "BUY" ? "good" : "bad"}`}>
+                      {currentOpenTrade.side}
+                    </span>
+                  </div>
+                  <div className="trade-grid">
+                    <div>
+                      <div className="trade-label">Entry</div>
+                      <div className="trade-value">{currentOpenTrade.entry_avg.toFixed(4)}</div>
+                    </div>
+                    <div>
+                      <div className="trade-label">Quantity</div>
+                      <div className="trade-value">{currentOpenTrade.quantity.toFixed(6)}</div>
+                    </div>
+                    <div>
+                      <div className="trade-label">Leverage</div>
+                      <div className="trade-value">{currentOpenTrade.leverage}x</div>
+                    </div>
+                    <div>
+                      <div className="trade-label">Unrealized PnL</div>
+                      <div className={`trade-value ${currentOpenTrade.unrealized_pnl >= 0 ? "good" : "bad"}`}>
+                        {currentOpenTrade.unrealized_pnl.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="trade-label">Opened</div>
+                      <div className="trade-value">{formatDateTime(currentOpenTrade.opened_at || currentOpenTrade.created_at)}</div>
+                    </div>
+                    <div>
+                      <div className="trade-label">Session</div>
+                      <div className="trade-value mono">
+                        {currentOpenTrade.session_id ? currentOpenTrade.session_id.slice(0, 8) : "-"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : latestClosedTrade ? (
+                <div className="trade-empty-state">
+                  <div className="trade-empty-title">No active trade</div>
+                  <div className="trade-empty-sub">
+                    Last closed: {latestClosedTrade.symbol} ({latestClosedTrade.side}) at{" "}
+                    {formatDateTime(latestClosedTrade.closed_at || latestClosedTrade.created_at)}
+                  </div>
+                  <div className={`trade-last-pnl ${latestClosedTrade.realized_pnl >= 0 ? "good" : "bad"}`}>
+                    Realized PnL: {latestClosedTrade.realized_pnl.toFixed(2)}
+                  </div>
+                </div>
+              ) : (
+                <div className="trade-empty-state">
+                  <div className="trade-empty-title">No trade data yet</div>
+                  <div className="trade-empty-sub">Wait for first execution cycle or switch to Positions tab.</div>
+                </div>
+              )}
             </div>
           </div>
         </section>
       ) : null}
 
-      {activeTab === "candidates" ? (
+      {isCandidatesTab ? (
         <section className="content">
           <div className="panel">
             <div className="panel-head">
@@ -676,6 +862,13 @@ function App() {
                       <td>{item.reject_reason || "-"}</td>
                     </tr>
                   ))}
+                  {(candidates.data || []).length === 0 && !candidates.loading ? (
+                    <tr>
+                      <td colSpan={5} className="empty-row">
+                        No candidates available. Run a scan or wait for next farm cycle.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
@@ -683,7 +876,7 @@ function App() {
         </section>
       ) : null}
 
-      {activeTab === "signals" ? (
+      {isSignalsTab ? (
         <section className="content">
           <div className="panel">
             <div className="panel-head">
@@ -714,6 +907,13 @@ function App() {
                       <td>{item.reason_codes.join(", ") || "-"}</td>
                     </tr>
                   ))}
+                  {(signals.data || []).length === 0 && !signals.loading ? (
+                    <tr>
+                      <td colSpan={6} className="empty-row">
+                        No signals generated for this symbol/timeframe yet.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
@@ -721,7 +921,7 @@ function App() {
         </section>
       ) : null}
 
-      {activeTab === "positions" ? (
+      {isPositionsTab ? (
         <section className="content two-panels">
           <div className="panel">
             <div className="panel-head">
@@ -756,6 +956,13 @@ function App() {
                       <td>{formatDateTime(item.closed_at || item.opened_at || item.created_at)}</td>
                     </tr>
                   ))}
+                  {(positions.data || []).length === 0 && !positions.loading ? (
+                    <tr>
+                      <td colSpan={8} className="empty-row">
+                        No open/closed positions for selected filters.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
@@ -794,6 +1001,13 @@ function App() {
                       <td>{item.status}</td>
                     </tr>
                   ))}
+                  {(orders.data || []).length === 0 && !orders.loading ? (
+                    <tr>
+                      <td colSpan={8} className="empty-row">
+                        No orders found for selected filters.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
@@ -807,8 +1021,8 @@ function App() {
         </section>
       ) : null}
 
-      {(summary.loading || candidates.loading) && !summary.data ? (
-        <div className="subtle-status page-loading">loading dashboard...</div>
+      {summary.loading && !summary.data ? (
+        <div className="subtle-status page-loading">Loading summary...</div>
       ) : null}
     </div>
   );
@@ -819,4 +1033,7 @@ if (!rootElement) {
   throw new Error("Root element not found");
 }
 
-createRoot(rootElement).render(<App />);
+const rootWindow = window as Window & { __zenithRoot?: Root };
+const appRoot = rootWindow.__zenithRoot ?? createRoot(rootElement);
+rootWindow.__zenithRoot = appRoot;
+appRoot.render(<App />);

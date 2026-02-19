@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from src.api.server import SummaryDTO, create_app
+from src.api.server import SummaryDTO, _derive_bot_status, create_app
 
 
 def test_health_envelope(monkeypatch):
@@ -45,6 +45,30 @@ def test_dashboard_summary_uses_contract(monkeypatch):
     assert body["success"] is True
     assert body["data"]["equity"] == 1000.0
     assert body["data"]["bot_status"] == "ACTIVE"
+
+
+def test_derive_bot_status_prefers_explicit_status(monkeypatch):
+    def fake_fetch(db, key):
+        if key == "BOT_STATUS":
+            return "STOPPED"
+        return None
+
+    monkeypatch.setattr("src.api.server._fetch_bot_config_value", fake_fetch)
+    assert _derive_bot_status(object(), "PAPER") == "STOPPED"
+
+
+def test_derive_bot_status_falls_back_to_active_on_fresh_heartbeat(monkeypatch):
+    monkeypatch.setattr("src.api.server._fetch_bot_config_value", lambda db, key: None)
+    monkeypatch.setattr("src.api.server._get_heartbeat_age_seconds", lambda db: 8)
+    monkeypatch.setattr("src.api.server._has_active_session", lambda db, mode: False)
+    assert _derive_bot_status(object(), "PAPER") == "ACTIVE"
+
+
+def test_derive_bot_status_falls_back_to_degraded_for_active_session_without_heartbeat(monkeypatch):
+    monkeypatch.setattr("src.api.server._fetch_bot_config_value", lambda db, key: None)
+    monkeypatch.setattr("src.api.server._get_heartbeat_age_seconds", lambda db: None)
+    monkeypatch.setattr("src.api.server._has_active_session", lambda db, mode: True)
+    assert _derive_bot_status(object(), "PAPER") == "DEGRADED"
 
 
 def test_performance_review_endpoint(monkeypatch):
@@ -162,6 +186,23 @@ def test_events_endpoint_envelope(monkeypatch):
     body = response.json()
     assert body["success"] is True
     assert body["data"][0]["role"] == "Judge"
+
+
+def test_cors_allows_localhost_3000_in_dev(monkeypatch):
+    monkeypatch.setenv("API_CORS_ORIGINS", "http://localhost:5173")
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
 def test_ws_dashboard_topic_once(monkeypatch):

@@ -65,6 +65,8 @@ class SummaryDTO(BaseModel):
     open_positions: int = Field(ge=0)
     win_rate: float = Field(ge=0, le=100)
     bot_status: str = Field(min_length=3, max_length=30)
+    bot_status_detail: Optional[str] = Field(default=None, max_length=300)
+    heartbeat_age_sec: Optional[int] = Field(default=None, ge=0)
 
 
 class CandidateDTO(BaseModel):

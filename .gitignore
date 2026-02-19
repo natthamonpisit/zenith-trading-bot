@@ -4,6 +4,7 @@
 .env.production
 .venv
 venv/
+venv_py39_backup_*/
 __pycache__/
 *.pyc
 

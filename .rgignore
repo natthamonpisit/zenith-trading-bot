@@ -1,0 +1,6 @@
+venv/
+venv_py39_backup_*/
+node_modules/
+dist/
+.pytest_cache/
+__pycache__/

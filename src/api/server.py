@@ -153,6 +153,51 @@ def _fetch_bot_config_value(db: Any, key: str) -> Optional[Any]:
     return None
 
 
+def _get_heartbeat_age_seconds(db: Any) -> Optional[int]:
+    try:
+        raw = _fetch_bot_config_value(db, "LAST_HEARTBEAT")
+        ts = _to_float(raw, default=0.0)
+        if ts <= 0:
+            return None
+        return int(max(0.0, datetime.now(timezone.utc).timestamp() - ts))
+    except Exception:
+        return None
+
+
+def _has_active_session(db: Any, mode: str) -> bool:
+    try:
+        rows = (
+            db.table("trading_sessions")
+            .select("id")
+            .eq("mode", mode)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return len(rows) > 0
+    except Exception:
+        return False
+
+
+def _derive_bot_status(db: Any, mode: str) -> str:
+    raw_status = _clean_cfg_value(_fetch_bot_config_value(db, "BOT_STATUS"), default="").upper()
+    if raw_status and raw_status != "UNKNOWN":
+        return raw_status
+
+    heartbeat_age = _get_heartbeat_age_seconds(db)
+    has_active_session = _has_active_session(db, mode)
+
+    if has_active_session and heartbeat_age is not None and heartbeat_age <= 120:
+        return "ACTIVE"
+    if has_active_session:
+        return "DEGRADED"
+    if heartbeat_age is not None and heartbeat_age <= 120:
+        return "ACTIVE"
+    return "IDLE"
+
+
 def _probe_db_health(db: Any) -> bool:
     try:
         db.table("bot_config").select("key").limit(1).execute()
@@ -264,9 +309,10 @@ def _compute_summary(db: Any, mode: str) -> SummaryDTO:
     except Exception:
         drawdown_pct = 0.0
 
-    bot_status = _clean_cfg_value(_fetch_bot_config_value(db, "BOT_STATUS"), default="UNKNOWN").upper()
-    if not bot_status:
-        bot_status = "UNKNOWN"
+    bot_status = _derive_bot_status(db, mode)
+    bot_status_detail_raw = _fetch_bot_config_value(db, "BOT_STATUS_DETAIL")
+    bot_status_detail = _clean_cfg_value(bot_status_detail_raw, default="")
+    heartbeat_age_sec = _get_heartbeat_age_seconds(db)
 
     return SummaryDTO(
         equity=round(equity, 4),
@@ -275,6 +321,8 @@ def _compute_summary(db: Any, mode: str) -> SummaryDTO:
         open_positions=open_positions,
         win_rate=round(win_rate, 2),
         bot_status=bot_status,
+        bot_status_detail=bot_status_detail or None,
+        heartbeat_age_sec=heartbeat_age_sec,
     )
 
 
@@ -748,7 +796,19 @@ def create_app() -> FastAPI:
     )
 
     cors_origins_raw = os.getenv("API_CORS_ORIGINS", "*").strip()
-    cors_origins = ["*"] if cors_origins_raw == "*" else [origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()]
+    if cors_origins_raw == "*":
+        cors_origins = ["*"]
+    else:
+        configured_origins = [origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()]
+        dev_origins = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+        cors_origins = sorted(set(configured_origins + dev_origins))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

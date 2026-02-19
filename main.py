@@ -359,6 +359,20 @@ def update_status_db(msg):
     except Exception as e:
         print(f"Status DB update error: {e}")
 
+
+def set_bot_status(status, detail=None):
+    """Persist high-level runtime status for dashboard/API summary."""
+    normalized = str(status or "").strip().upper()
+    allowed = {"STARTING", "ACTIVE", "STOPPED", "DEGRADED", "ERROR"}
+    if normalized not in allowed:
+        normalized = "ACTIVE"
+    try:
+        db.table("bot_config").upsert({"key": "BOT_STATUS", "value": normalized}).execute()
+        if detail:
+            db.table("bot_config").upsert({"key": "BOT_STATUS_DETAIL", "value": str(detail)}).execute()
+    except Exception as e:
+        print(f"BOT_STATUS update error: {e}")
+
 def check_trailing_stops():
     """Check all open positions for trailing stop triggers."""
     try:
@@ -578,8 +592,10 @@ def run_trading_cycle():
     set_heartbeat()
 
     if is_bot_stopped():
+        set_bot_status("STOPPED", "⛔ Bot stopped by operator")
         log_activity("System", "⛔ Bot is STOPPED. Skipping trading cycle.", "WARNING")
         return
+    set_bot_status("ACTIVE")
 
     # 0. Check trailing stops BEFORE processing new signals
     check_trailing_stops()
@@ -741,6 +757,7 @@ def run_trading_cycle():
              print("ℹ️ No open positions to manage.")
             
     except Exception as e:
+        set_bot_status("DEGRADED", f"Trading cycle error: {e}")
         print(f"Trading Cycle Error: {e}")
         # If DB read fails, retry later
         time.sleep(5)
@@ -766,6 +783,7 @@ def start_watchdog():
 
 def start():
     try:
+        set_bot_status("STARTING", "🚀 Booting Zenith bot services")
         log_activity("System", "🚀 Zenith Bot Started (6-Role Architecture)", "SUCCESS")
 
         # Start Watchdog
@@ -851,9 +869,11 @@ def start():
         # 2. Run Trading Cycle (Can take time)
         print("🚀 Starting First Trading Cycle...")
         try:
+            set_bot_status("ACTIVE", "✅ First trading cycle starting")
             run_trading_cycle()
         except Exception as e:
              # Log but DO NOT CRASH. The scheduler will try again later.
+             set_bot_status("DEGRADED", f"Initial trading cycle failed: {e}")
              print(f"❌ Initial Trading Cycle Failed: {e}")
              log_activity("System", f"Initial Trading Cycle Failed: {e}", "ERROR")
 
@@ -877,10 +897,12 @@ def start():
                 schedule.run_pending()
                 time.sleep(1)
             except Exception as e:
+                set_bot_status("DEGRADED", f"Loop error: {e}")
                 log_activity("System", f"Loop Error: {e}", "ERROR")
                 time.sleep(5)
     except Exception as e:
         # Emergency Log
+        set_bot_status("ERROR", f"Critical crash: {e}")
         try:
              db.table("system_logs").insert({"role": "System", "message": f"CRITICAL CRASH: {e}", "level": "ERROR"}).execute()
         except Exception:
