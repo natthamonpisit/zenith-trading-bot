@@ -16,6 +16,7 @@ from src.roles.job_analysis import Strategist, Judge, TradeDecision
 from src.roles.job_executor import SniperExecutor
 from src.roles.job_wallet import WalletSync
 from src.roles.signal_scoring import SignalScorer
+from src.roles.order_planner import OrderPlanner
 
 # --- IMPORT SESSION MANAGER ---
 from src.session_manager import (
@@ -53,6 +54,7 @@ print("✅ Strategist ready")
 tiered_ai_engine = TieredAIDecisionEngine(strategist=strategist)
 telemetry_tracker = TelemetryTracker(db=db)
 signal_scorer = SignalScorer(db=db)
+order_planner = OrderPlanner(db=db)
 
 judge = Judge()
 sniper = SniperExecutor(spy_instance=price_spy)
@@ -467,6 +469,33 @@ def process_pair(pair, timeframe, intent="ENTRY"):
         except Exception as telemetry_error:
             print(f"Telemetry rule save error: {telemetry_error}")
 
+        order_plan_payload = None
+        order_plan_id = None
+        if ai_rec == "BUY" and verdict.decision == "APPROVED":
+            try:
+                order_plan_payload = order_planner.build_plan(
+                    symbol=pair,
+                    side="BUY",
+                    timeframe=timeframe,
+                    entry_price=current_price,
+                    tech_data=tech_data,
+                    run_id=run_id,
+                    asset_id=asset_id,
+                    score_result=score_result.as_dict() if score_result else None,
+                )
+                order_plan_id = order_planner.persist_plan(order_plan_payload)
+                if order_plan_id:
+                    order_plan_payload["id"] = order_plan_id
+                    print(
+                        f"   - Order Plan: SL={order_plan_payload['stop_loss']:.4f} "
+                        f"TP1={order_plan_payload['take_profit_1']:.4f} "
+                        f"TP2={order_plan_payload['take_profit_2']:.4f}"
+                    )
+            except Exception as plan_error:
+                order_plan_payload = None
+                order_plan_id = None
+                print(f"Order plan build/persist error for {pair}: {plan_error}")
+
         # Log Signal to DB (only BUY/SELL, not WAIT/HOLD)
         signal_data = {
             "asset_id": asset_id,
@@ -477,6 +506,10 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             "judge_reason": verdict.reason,
             "is_sim": is_sim
         }
+
+        if order_plan_payload and ai_rec == "BUY":
+            signal_data["stop_loss"] = order_plan_payload.get("stop_loss")
+            signal_data["take_profit"] = order_plan_payload.get("take_profit_2")
         
         # For SELL signals, attach default exit reason if Approved
         # (This is handled in executor by default, but we can be explicit here if we want)
@@ -486,6 +519,12 @@ def process_pair(pair, timeframe, intent="ENTRY"):
              signal_data['exit_reason'] = f"AI_SELL_SIGNAL: {reasoning_text}"
              
         signal_entry = db.table("trade_signals").insert(signal_data).execute()
+        if order_plan_id and signal_entry.data:
+            order_planner.update_plan(
+                order_plan_id,
+                signal_id=signal_entry.data[0].get("id"),
+                status="PLANNED",
+            )
         
         # 4. SNIPER (Executor)
         if verdict.decision == "APPROVED":
@@ -495,6 +534,16 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             full_signal = signal_entry.data[0]
             full_signal['assets'] = {'symbol': pair} # Manual hydrate for simplicity
             full_signal['order_size'] = verdict.size  # USDT amount from Judge
+
+            if order_plan_payload and ai_rec == "BUY":
+                full_signal["order_plan_id"] = order_plan_id
+                full_signal["stop_loss"] = order_plan_payload.get("stop_loss")
+                full_signal["take_profit_1"] = order_plan_payload.get("take_profit_1")
+                full_signal["take_profit_2"] = order_plan_payload.get("take_profit_2")
+                full_signal["tp1_partial_pct"] = order_plan_payload.get("tp1_partial_pct")
+                full_signal["breakeven_price"] = order_plan_payload.get("breakeven_price")
+                full_signal["trailing_mode"] = order_plan_payload.get("trailing_mode")
+                full_signal["trailing_value"] = order_plan_payload.get("trailing_value")
             
             # Pass exit reason explicitly to executor if SELL
             if ai_rec == "SELL":
@@ -503,9 +552,11 @@ def process_pair(pair, timeframe, intent="ENTRY"):
 
             success = sniper.execute_order(full_signal)
             if success:
-                 log_activity("Sniper", f"✅ Order Executed for {pair}!", "SUCCESS")
+                log_activity("Sniper", f"✅ Order Executed for {pair}!", "SUCCESS")
             else:
-                 log_activity("Sniper", f"❌ Execution Failed for {pair}", "ERROR")
+                log_activity("Sniper", f"❌ Execution Failed for {pair}", "ERROR")
+                if order_plan_id and ai_rec == "BUY":
+                    order_planner.update_plan(order_plan_id, status="FAILED", notes="execution_failed")
 
     except Exception as e:
         print(f"Error processing {pair}: {e}")
@@ -532,7 +583,7 @@ def set_bot_status(status, detail=None):
         print(f"BOT_STATUS update error: {e}")
 
 def check_trailing_stops():
-    """Check all open positions for trailing stop triggers."""
+    """Check open positions for TP ladder and trailing stop triggers."""
     try:
         # Read config
         trail_enabled_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_ENABLED").execute()
@@ -542,11 +593,11 @@ def check_trailing_stops():
         # ATR-based or Fixed % trailing stop
         use_atr_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_USE_ATR").execute()
         use_atr = str(use_atr_res.data[0]['value']).replace('"', '').strip().lower() == 'true' if use_atr_res.data else False
-        
+
         # Config for Fixed % mode
         trail_pct_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_PCT").execute()
         trail_pct = float(str(trail_pct_res.data[0]['value']).replace('"', '').strip()) / 100 if trail_pct_res.data else 0.03
-        
+
         # Config for ATR mode
         atr_multiplier_res = db.table("bot_config").select("value").eq("key", "TRAILING_STOP_ATR_MULTIPLIER").execute()
         atr_multiplier = float(str(atr_multiplier_res.data[0]['value']).replace('"', '').strip()) if atr_multiplier_res.data else 2.0
@@ -554,25 +605,60 @@ def check_trailing_stops():
         min_profit_res = db.table("bot_config").select("value").eq("key", "MIN_PROFIT_TO_TRAIL_PCT").execute()
         min_profit_pct = float(str(min_profit_res.data[0]['value']).replace('"', '').strip()) / 100 if min_profit_res.data else 0.01
 
+        tp_ladder_res = db.table("bot_config").select("value").eq("key", "ENABLE_TP_LADDER").execute()
+        tp_ladder_enabled = (
+            str(tp_ladder_res.data[0]['value']).replace('"', '').strip().lower() == 'true'
+            if tp_ladder_res.data
+            else True
+        )
+        tp1_pct_res = db.table("bot_config").select("value").eq("key", "TP1_PARTIAL_PCT").execute()
+        tp1_default_partial_pct = float(str(tp1_pct_res.data[0]['value']).replace('"', '').strip()) if tp1_pct_res.data else 50.0
+        be_res = db.table("bot_config").select("value").eq("key", "BREAKEVEN_BUFFER_PCT").execute()
+        breakeven_buffer_pct = float(str(be_res.data[0]['value']).replace('"', '').strip()) if be_res.data else 0.1
+
         # Fetch ALL open positions (both PAPER and LIVE)
         positions = db.table("positions").select("*, assets(symbol)").eq("is_open", True).execute()
         if not positions.data:
             return
+
+        def _dispatch_sell_signal(position, symbol, current_price, reason, note, partial_pct=None):
+            signal_data = {
+                "asset_id": position['asset_id'],
+                "signal_type": "SELL",
+                "entry_target": current_price,
+                "status": "PENDING",
+                "judge_reason": note,
+                "exit_reason": reason,
+                "is_sim": position.get('is_sim', True),
+            }
+            signal_entry = db.table("trade_signals").insert(signal_data).execute()
+            full_signal = signal_entry.data[0]
+            full_signal['assets'] = {'symbol': symbol}
+            full_signal['order_size'] = 0  # Not used for SELL
+            if partial_pct is not None:
+                full_signal["partial_close_pct"] = partial_pct
+            if position.get("order_plan_id"):
+                full_signal["order_plan_id"] = position.get("order_plan_id")
+            return sniper.execute_order(full_signal)
 
         for pos in positions.data:
             symbol = pos['assets']['symbol'] if pos.get('assets') else None
             if not symbol:
                 continue
 
-            entry_price = float(pos['entry_avg'])
-            highest = float(pos.get('highest_price_seen') or entry_price)
+            entry_price = _to_float_safe(pos.get('entry_avg'), default=0.0)
+            if entry_price <= 0:
+                continue
+            highest = _to_float_safe(pos.get('highest_price_seen'), default=entry_price)
 
             # Fetch current price
             try:
                 ticker = price_spy.exchange.fetch_ticker(symbol)
-                current_price = ticker['last']
+                current_price = _to_float_safe(ticker.get('last'), default=0.0)
             except Exception as e:
                 print(f"Trailing stop: Failed to fetch price for {symbol}: {e}")
+                continue
+            if current_price <= 0:
                 continue
 
             # Update highest price seen
@@ -580,54 +666,112 @@ def check_trailing_stops():
                 highest = current_price
                 db.table("positions").update({"highest_price_seen": highest}).eq("id", pos['id']).execute()
 
+            # Phase 2: TP ladder handling
+            tp1 = _to_float_safe(pos.get("take_profit_1"), default=0.0)
+            tp2 = _to_float_safe(pos.get("take_profit_2"), default=0.0)
+            tp1_hit = bool(pos.get("tp1_hit", False))
+            if tp_ladder_enabled:
+                if tp2 > 0 and current_price >= tp2:
+                    note = (
+                        f"TP2 reached: price ${current_price:,.2f} >= TP2 ${tp2:,.2f} "
+                        f"(entry ${entry_price:,.2f})"
+                    )
+                    log_activity("System", f"{symbol} {note}", "WARNING")
+                    success = _dispatch_sell_signal(
+                        position=pos,
+                        symbol=symbol,
+                        current_price=current_price,
+                        reason="TAKE_PROFIT_2",
+                        note=note,
+                    )
+                    if success:
+                        log_activity("Sniper", f"TP2 SELL executed for {symbol}", "SUCCESS")
+                    else:
+                        log_activity("Sniper", f"TP2 SELL failed for {symbol}", "ERROR")
+                    time.sleep(0.15)
+                    continue
+
+                if tp1 > 0 and not tp1_hit and current_price >= tp1:
+                    partial_pct = _to_float_safe(pos.get("tp1_partial_pct"), default=tp1_default_partial_pct)
+                    partial_pct = max(5.0, min(95.0, partial_pct))
+                    note = (
+                        f"TP1 reached: price ${current_price:,.2f} >= TP1 ${tp1:,.2f}; "
+                        f"partial close {partial_pct:.1f}%"
+                    )
+                    log_activity("System", f"{symbol} {note}", "WARNING")
+                    success = _dispatch_sell_signal(
+                        position=pos,
+                        symbol=symbol,
+                        current_price=current_price,
+                        reason="TAKE_PROFIT_1_PARTIAL",
+                        note=note,
+                        partial_pct=partial_pct,
+                    )
+                    if success:
+                        break_even_price = _to_float_safe(
+                            pos.get("break_even_price"),
+                            default=entry_price * (1 + (breakeven_buffer_pct / 100.0)),
+                        )
+                        db.table("positions").update(
+                            {
+                                "tp1_hit": True,
+                                "break_even_armed": True,
+                                "break_even_price": break_even_price,
+                                "current_stop_loss": break_even_price,
+                                "last_tp_event": "TP1_HIT",
+                            }
+                        ).eq("id", pos["id"]).execute()
+                        log_activity("Sniper", f"TP1 partial executed for {symbol}", "SUCCESS")
+                    else:
+                        log_activity("Sniper", f"TP1 partial failed for {symbol}", "ERROR")
+                    time.sleep(0.15)
+                    continue
+
             # Check if min profit threshold reached
             profit_pct = (highest - entry_price) / entry_price
-            if profit_pct < min_profit_pct:
-                continue  # Not enough profit to activate trailing stop
+            if profit_pct < min_profit_pct and not bool(pos.get("break_even_armed", False)):
+                continue  # Not enough profit to activate trailing stop yet
 
             # Calculate trailing stop price (ATR-based or Fixed %)
             if use_atr:
-                # ATR-based: More dynamic, adjusts to volatility
                 position_atr = pos.get('entry_atr')  # ATR at entry time
                 if position_atr and float(position_atr) > 0:
                     atr_value = float(position_atr)
-                    # Trail by ATR * multiplier below highest price
                     trail_distance = atr_value * atr_multiplier
                     trail_price = highest - trail_distance
                     print(f"[ATR Trail] {symbol}: ATR={atr_value:.2f}, Multiplier={atr_multiplier}, Distance=${trail_distance:.2f}")
                 else:
-                    # Fallback to fixed % if no ATR data
                     trail_price = highest * (1 - trail_pct)
                     print(f"[Fixed Trail Fallback] {symbol}: No ATR data, using {trail_pct*100}%")
             else:
-                # Fixed percentage mode (original behavior)
                 trail_price = highest * (1 - trail_pct)
                 print(f"[Fixed Trail] {symbol}: {trail_pct*100}% below peak")
 
-            # Update trailing_stop_price in DB (for dashboard visibility)
-            db.table("positions").update({"trailing_stop_price": trail_price}).eq("id", pos['id']).execute()
+            break_even_price = _to_float_safe(
+                pos.get("break_even_price"),
+                default=entry_price * (1 + (breakeven_buffer_pct / 100.0)),
+            )
+            if bool(pos.get("break_even_armed", False)) or tp1_hit:
+                trail_price = max(trail_price, break_even_price)
+
+            db.table("positions").update(
+                {"trailing_stop_price": trail_price, "current_stop_loss": trail_price}
+            ).eq("id", pos['id']).execute()
 
             # TRIGGER: Price dropped below trailing stop
             if current_price <= trail_price:
-                is_sim = pos.get('is_sim', True)
-                log_activity("System", f"Trailing Stop triggered for {symbol}! Price ${current_price:,.2f} < Stop ${trail_price:,.2f}", "WARNING")
-
-                # Create a SELL signal and execute
-                signal_data = {
-                    "asset_id": pos['asset_id'],
-                    "signal_type": "SELL",
-                    "entry_target": current_price,
-                    "status": "PENDING",
-                    "judge_reason": f"Trailing Stop: price ${current_price:,.2f} < stop ${trail_price:,.2f} (peak ${highest:,.2f})",
-                    "exit_reason": "TRAILING_STOP",  # NEW: Track why we sold
-                    "is_sim": is_sim
-                }
-                signal_entry = db.table("trade_signals").insert(signal_data).execute()
-                full_signal = signal_entry.data[0]
-                full_signal['assets'] = {'symbol': symbol}
-                full_signal['order_size'] = 0  # Not used for SELL (uses position qty)
-
-                success = sniper.execute_order(full_signal)
+                note = (
+                    f"Trailing Stop: price ${current_price:,.2f} < stop ${trail_price:,.2f} "
+                    f"(peak ${highest:,.2f})"
+                )
+                log_activity("System", f"Trailing Stop triggered for {symbol}! {note}", "WARNING")
+                success = _dispatch_sell_signal(
+                    position=pos,
+                    symbol=symbol,
+                    current_price=current_price,
+                    reason="TRAILING_STOP",
+                    note=note,
+                )
                 if success:
                     log_activity("Sniper", f"Trailing Stop SELL executed for {symbol}", "SUCCESS")
                 else:

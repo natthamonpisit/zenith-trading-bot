@@ -69,6 +69,7 @@ def test_replay_bundle_shape():
     assert "post_trade_attribution" in bundle
     assert "feature_snapshots" in bundle
     assert "signal_scores" in bundle
+    assert "order_plans" in bundle
 
 
 def test_track_feature_snapshot_insert():

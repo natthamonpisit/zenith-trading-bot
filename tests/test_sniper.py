@@ -130,7 +130,8 @@ class TestSniperPaperModeSell:
             pos_chain.order.return_value = pos_chain
             pos_chain.limit.return_value = pos_chain
             pos_chain.execute = mock_position_execute
-            
+
+            original_table = mock_db.table
             def table_mock(table_name):
                 if table_name == 'positions':
                     result = Mock()
@@ -138,8 +139,8 @@ class TestSniperPaperModeSell:
                     result.update.return_value = Mock(execute=Mock())
                     result.insert.return_value = Mock(execute=Mock())
                     return result
-                return mock_db.table(table_name)
-            
+                return original_table(table_name)
+
             mock_db.table = table_mock
             
             mock_exchange.fetch_ticker.return_value = {'last': 55000.0}  # Profit!
@@ -180,14 +181,15 @@ class TestSniperPaperModeSell:
             pos_chain.order.return_value = pos_chain
             pos_chain.limit.return_value = pos_chain
             pos_chain.execute = Mock(return_value=Mock(data=[]))  # Empty
-            
+
+            original_table = mock_db.table
             def table_mock(table_name):
                 if table_name == 'positions':
                     result = Mock()
                     result.select.return_value = pos_chain
                     return result
-                return mock_db.table(table_name)
-            
+                return original_table(table_name)
+
             mock_db.table = table_mock
             
             mock_exchange.fetch_ticker.return_value = {'last': 55000.0}

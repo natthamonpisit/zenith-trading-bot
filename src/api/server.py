@@ -1398,6 +1398,31 @@ def create_app() -> FastAPI:
         )
         return _json_success(data=rows, request_id=_request_id_from(request))
 
+    @app.get("/api/replay/order-plans")
+    async def replay_order_plans(
+        request: Request,
+        symbol: Optional[str] = Query(default=None),
+        run_id: Optional[str] = Query(default=None, min_length=3, max_length=128),
+        status_filter: Optional[str] = Query(default=None, alias="status"),
+        limit: int = Query(default=200, ge=1, le=1000),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        rows = tracker.get_order_plans(
+            symbol=symbol.upper() if symbol else None,
+            run_id=run_id,
+            status=status_filter.upper() if status_filter else None,
+            limit=limit,
+        )
+        return _json_success(data=rows, request_id=_request_id_from(request))
+
     @app.get("/api/replay/post-trades")
     async def replay_post_trades(
         request: Request,

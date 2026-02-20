@@ -483,6 +483,38 @@ def test_replay_signal_scores_endpoint(monkeypatch):
     assert body["data"][0]["total_score"] == 77.5
 
 
+def test_replay_order_plans_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+
+    class DummyTracker:
+        def __init__(self, db):
+            self.db = db
+
+        def get_order_plans(self, symbol=None, run_id=None, status=None, limit=200):
+            return [
+                {
+                    "id": "op1",
+                    "symbol": symbol or "BTC/USDT",
+                    "run_id": run_id or "run-1",
+                    "status": status or "ACTIVE",
+                    "take_profit_1": 65000.0,
+                }
+            ]
+
+    monkeypatch.setattr("src.api.server.TelemetryTracker", DummyTracker)
+    response = client.get(
+        "/api/replay/order-plans",
+        params={"run_id": "run-1", "symbol": "BTC/USDT", "status": "ACTIVE", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"][0]["id"] == "op1"
+    assert body["data"][0]["status"] == "ACTIVE"
+
+
 def test_hardening_health_endpoint(monkeypatch):
     app = create_app()
     client = TestClient(app)

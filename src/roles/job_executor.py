@@ -10,6 +10,15 @@ from src.capital_manager import auto_transfer_profit
 # Lock to prevent concurrent simulation balance updates
 _sim_balance_lock = threading.Lock()
 
+
+def _to_float(raw, default=0.0):
+    try:
+        if raw is None:
+            return default
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
 class SniperExecutor:
     """
     THE SNIPER (Execution Engine)
@@ -21,6 +30,41 @@ class SniperExecutor:
         self.exchange = self.spy.exchange
         self.db = get_db()
 
+    def _update_order_plan_status(self, order_plan_id, **fields):
+        if not order_plan_id:
+            return
+        payload = {key: value for key, value in fields.items() if value is not None}
+        if not payload:
+            return
+        try:
+            self.db.table("order_plans").update(payload).eq("id", order_plan_id).execute()
+        except Exception:
+            # Soft fail to avoid blocking execution if phase2 table is not ready.
+            pass
+
+    def _insert_position_with_fallback(self, payload):
+        """
+        Insert position with phase2 fields. If migration is not applied yet, retry with legacy payload.
+        """
+        try:
+            return self.db.table("positions").insert(payload).execute()
+        except Exception as exc:
+            legacy_keys = {
+                "asset_id",
+                "side",
+                "entry_avg",
+                "quantity",
+                "is_open",
+                "is_sim",
+                "highest_price_seen",
+                "trailing_stop_price",
+                "entry_atr",
+                "session_id",
+            }
+            legacy_payload = {key: value for key, value in payload.items() if key in legacy_keys}
+            print(f"Sniper: Phase2 position fields unavailable, retrying legacy insert ({exc})")
+            return self.db.table("positions").insert(legacy_payload).execute()
+
     def execute_order(self, signal):
         """
         Executes an order.
@@ -28,7 +72,17 @@ class SniperExecutor:
         """
         symbol = signal['assets']['symbol']
         side = signal['signal_type'] # BUY or SELL
-        amount = signal.get('order_size', signal['entry_target'])  # USDT amount from Judge
+        amount = signal.get('order_size')
+        if amount is None:
+            amount = signal.get('entry_target', 0)  # USDT amount from Judge
+        order_plan_id = signal.get("order_plan_id")
+        partial_close_pct = _to_float(signal.get("partial_close_pct"), default=100.0)
+        if partial_close_pct <= 0:
+            partial_close_pct = 100.0
+        if partial_close_pct <= 1.0:
+            partial_close_pct *= 100.0
+        partial_close_pct = max(1.0, min(100.0, partial_close_pct))
+        partial_mode = side.upper() == "SELL" and partial_close_pct < 99.999
         
         # SAFETY CHECK: Double check with DB if signal is APPROVED
         # (Already filtered before calling this, but good practice)
@@ -96,8 +150,15 @@ class SniperExecutor:
                             pos = pos_res.data[0]
                             qty = float(pos['quantity'])
                             entry_price = float(pos['entry_avg'])
-                            revenue = qty * fill_price
-                            pnl = revenue - (qty * entry_price)
+                            qty_to_sell = qty
+                            if partial_mode:
+                                qty_to_sell = max(0.0, qty * (partial_close_pct / 100.0))
+                            qty_to_sell = min(qty, qty_to_sell)
+                            if qty_to_sell <= 0:
+                                raise Exception(f"Partial close qty is zero for {symbol}")
+
+                            revenue = qty_to_sell * fill_price
+                            pnl = revenue - (qty_to_sell * entry_price)
 
                             new_bal = current_bal + revenue
                             self.db.table("simulation_portfolio").update({"balance": new_bal}).eq("id", 1).execute()
@@ -105,14 +166,38 @@ class SniperExecutor:
                             # Extract Exit Reason (Default: AI_SELL_SIGNAL)
                             exit_reason = signal.get('exit_reason', 'AI_SELL_SIGNAL')
 
-                            # Close the existing position with exit data
-                            self.db.table("positions").update({
-                                "is_open": False,
-                                "exit_price": fill_price,
-                                "pnl": pnl,
-                                "exit_reason": exit_reason,
-                                "closed_at": datetime.utcnow().isoformat()
-                            }).eq("id", pos['id']).execute()
+                            remaining_qty = qty - qty_to_sell
+                            if remaining_qty > 1e-12:
+                                update_payload = {
+                                    "quantity": remaining_qty,
+                                    "last_tp_event": exit_reason,
+                                }
+                                if str(exit_reason).upper() == "TAKE_PROFIT_1_PARTIAL":
+                                    update_payload["tp1_hit"] = True
+                                    update_payload["break_even_armed"] = True
+                                    update_payload["current_stop_loss"] = _to_float(
+                                        pos.get("break_even_price"), default=entry_price
+                                    )
+                                self.db.table("positions").update(update_payload).eq("id", pos['id']).execute()
+                                self._update_order_plan_status(
+                                    order_plan_id or pos.get("order_plan_id"),
+                                    status="PARTIALLY_FILLED",
+                                    position_id=pos.get("id"),
+                                )
+                            else:
+                                # Close the existing position with exit data
+                                self.db.table("positions").update({
+                                    "is_open": False,
+                                    "exit_price": fill_price,
+                                    "pnl": pnl,
+                                    "exit_reason": exit_reason,
+                                    "closed_at": datetime.utcnow().isoformat()
+                                }).eq("id", pos['id']).execute()
+                                self._update_order_plan_status(
+                                    order_plan_id or pos.get("order_plan_id"),
+                                    status="CLOSED",
+                                    position_id=pos.get("id"),
+                                )
 
                             # Update session stats
                             session_id = pos.get('session_id')
@@ -128,8 +213,12 @@ class SniperExecutor:
                                     new_bal_after_transfer = current_bal + revenue - transferred
                                     self.db.table("simulation_portfolio").update({"balance": new_bal_after_transfer}).eq("id", 1).execute()
 
-                            fill_amount = qty
-                            print(f"Sniper (Sim): SELL {qty:.6f} {symbol} at ${fill_price:,.2f}. Reason: {exit_reason} | PnL: ${pnl:,.2f}")
+                            fill_amount = qty_to_sell
+                            mode_text = "PARTIAL SELL" if remaining_qty > 1e-12 else "SELL"
+                            print(
+                                f"Sniper (Sim): {mode_text} {qty_to_sell:.6f} {symbol} at ${fill_price:,.2f}. "
+                                f"Reason: {exit_reason} | PnL: ${pnl:,.2f}"
+                            )
                         else:
                             raise Exception(f"No open simulation position found for {symbol} to sell.")
                 
@@ -160,7 +249,14 @@ class SniperExecutor:
                     if not pos_res.data:
                         raise Exception(f"No open LIVE position found for {symbol} to sell.")
 
-                    sell_qty = float(pos_res.data[0]['quantity'])
+                    position_qty = float(pos_res.data[0]['quantity'])
+                    sell_qty = position_qty
+                    if partial_mode:
+                        sell_qty = max(0.0, position_qty * (partial_close_pct / 100.0))
+                    sell_qty = min(position_qty, sell_qty)
+                    if sell_qty <= 0:
+                        raise Exception(f"Partial close qty is zero for {symbol}")
+
                     print(f"Sniper: Placing Market SELL for {sell_qty} qty of {symbol}...")
                     order = self.exchange.create_order(symbol, 'market', 'sell', sell_qty, None, {
                         'type': 'spot'
@@ -193,18 +289,35 @@ class SniperExecutor:
                 session = get_active_session(mode=mode)
                 session_id = session['id'] if session else None
 
-                self.db.table("positions").insert({
-                   "asset_id": signal['asset_id'],
-                   "side": "LONG",
-                   "entry_avg": fill_price,
-                   "quantity": fill_amount,
-                   "is_open": True,
-                   "is_sim": is_sim,
-                   "highest_price_seen": fill_price,
-                   "trailing_stop_price": None,
-                   "entry_atr": entry_atr,  # Store ATR for trailing stop
-                   "session_id": session_id  # Link to trading session
-                }).execute()
+                position_payload = {
+                    "asset_id": signal['asset_id'],
+                    "side": "LONG",
+                    "entry_avg": fill_price,
+                    "quantity": fill_amount,
+                    "is_open": True,
+                    "is_sim": is_sim,
+                    "highest_price_seen": fill_price,
+                    "trailing_stop_price": None,
+                    "entry_atr": entry_atr,  # Store ATR for trailing stop
+                    "session_id": session_id,  # Link to trading session
+                    "order_plan_id": order_plan_id,
+                    "initial_stop_loss": signal.get("stop_loss"),
+                    "current_stop_loss": signal.get("stop_loss"),
+                    "take_profit_1": signal.get("take_profit_1"),
+                    "take_profit_2": signal.get("take_profit_2"),
+                    "tp1_partial_pct": signal.get("tp1_partial_pct"),
+                    "tp1_hit": False,
+                    "break_even_armed": False,
+                    "break_even_price": signal.get("breakeven_price"),
+                }
+                inserted_pos = self._insert_position_with_fallback(position_payload)
+                inserted_pos_row = inserted_pos.data[0] if inserted_pos and inserted_pos.data else None
+                self._update_order_plan_status(
+                    order_plan_id,
+                    status="ACTIVE",
+                    signal_id=signal.get("id"),
+                    position_id=inserted_pos_row.get("id") if inserted_pos_row else None,
+                )
             else:
                 # SELL: Position already closed above (sim) or record close for live
                 if not is_sim:
@@ -214,18 +327,49 @@ class SniperExecutor:
                         pos = pos_res.data[0]
                         entry_price = float(pos['entry_avg'])
                         qty = float(pos['quantity'])
-                        pnl = (fill_price - entry_price) * qty
+                        qty_to_sell = qty
+                        if partial_mode:
+                            qty_to_sell = max(0.0, qty * (partial_close_pct / 100.0))
+                        qty_to_sell = min(qty, qty_to_sell)
+                        if qty_to_sell <= 0:
+                            raise Exception(f"Partial close qty is zero for {symbol}")
+
+                        pnl = (fill_price - entry_price) * qty_to_sell
                         
                         # Extract Exit Reason (Default: AI_SELL_SIGNAL)
                         exit_reason = signal.get('exit_reason', 'AI_SELL_SIGNAL')
-                        
-                        self.db.table("positions").update({
-                            "is_open": False,
-                            "exit_price": fill_price,
-                            "pnl": pnl,
-                            "exit_reason": exit_reason,
-                            "closed_at": datetime.utcnow().isoformat()
-                        }).eq("id", pos['id']).execute()
+
+                        remaining_qty = qty - qty_to_sell
+                        if remaining_qty > 1e-12:
+                            update_payload = {
+                                "quantity": remaining_qty,
+                                "last_tp_event": exit_reason,
+                            }
+                            if str(exit_reason).upper() == "TAKE_PROFIT_1_PARTIAL":
+                                update_payload["tp1_hit"] = True
+                                update_payload["break_even_armed"] = True
+                                update_payload["current_stop_loss"] = _to_float(
+                                    pos.get("break_even_price"), default=entry_price
+                                )
+                            self.db.table("positions").update(update_payload).eq("id", pos['id']).execute()
+                            self._update_order_plan_status(
+                                order_plan_id or pos.get("order_plan_id"),
+                                status="PARTIALLY_FILLED",
+                                position_id=pos.get("id"),
+                            )
+                        else:
+                            self.db.table("positions").update({
+                                "is_open": False,
+                                "exit_price": fill_price,
+                                "pnl": pnl,
+                                "exit_reason": exit_reason,
+                                "closed_at": datetime.utcnow().isoformat()
+                            }).eq("id", pos['id']).execute()
+                            self._update_order_plan_status(
+                                order_plan_id or pos.get("order_plan_id"),
+                                status="CLOSED",
+                                position_id=pos.get("id"),
+                            )
 
                         # Update session stats
                         session_id = pos.get('session_id')
@@ -237,7 +381,11 @@ class SniperExecutor:
                             mode = 'LIVE'
                             auto_transfer_profit(mode=mode, profit_amount=pnl)
 
-                        print(f"Sniper (Live): Closed position. Exit: ${fill_price:,.2f} | Reason: {exit_reason} | PnL: ${pnl:,.2f}")
+                        mode_text = "PARTIAL SELL" if remaining_qty > 1e-12 else "SELL"
+                        print(
+                            f"Sniper (Live): {mode_text}. Exit: ${fill_price:,.2f} | "
+                            f"Reason: {exit_reason} | PnL: ${pnl:,.2f}"
+                        )
             
             # 3. Update Signal Status
             self.db.table("trade_signals").update({"status": "EXECUTED", "is_sim": is_sim}).eq("id", signal['id']).execute()
@@ -245,5 +393,6 @@ class SniperExecutor:
             return True
         except Exception as e:
             print(f"Sniper Error: {e}")
+            self._update_order_plan_status(order_plan_id, status="FAILED", notes=str(e)[:280])
             self.db.table("trade_signals").update({"status": "FAILED", "judge_reason": str(e)}).eq("id", signal['id']).execute()
             return False

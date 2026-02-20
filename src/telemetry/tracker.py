@@ -331,6 +331,24 @@ class TelemetryTracker:
             limit=limit,
         )
 
+    def get_order_plans(
+        self,
+        symbol: Optional[str] = None,
+        run_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        return self._query_with_filters(
+            table="order_plans",
+            select=(
+                "id,run_id,signal_id,position_id,asset_id,symbol,side,timeframe,entry_price,stop_loss,"
+                "take_profit_1,take_profit_2,risk_per_unit,tp1_partial_pct,breakeven_price,trailing_mode,"
+                "trailing_value,status,plan_payload,notes,created_at"
+            ),
+            filters={"symbol": symbol, "run_id": run_id, "status": status},
+            limit=limit,
+        )
+
     def get_replay_bundle(self, run_id: str, limit: int = 200) -> Dict[str, Any]:
         return {
             "run_id": run_id,
@@ -339,4 +357,5 @@ class TelemetryTracker:
             "post_trade_attribution": self.get_post_trade_attribution(run_id=run_id, limit=limit),
             "feature_snapshots": self.get_feature_snapshots(run_id=run_id, limit=limit),
             "signal_scores": self.get_signal_scores(run_id=run_id, limit=limit),
+            "order_plans": self.get_order_plans(run_id=run_id, limit=limit),
         }
