@@ -75,6 +75,13 @@ type CandidateInsightItem = {
   whitelist_pass: boolean;
   universe_mode: string;
   manual_score: number;
+  score_total?: number | null;
+  score_threshold?: number | null;
+  score_status?: string;
+  score_reason?: string;
+  score_notes?: string[];
+  score_run_id?: string | null;
+  score_updated_at?: string | null;
   scanner_reason: string;
   live_tradable: boolean;
   live_block_reason: string | null;
@@ -1382,6 +1389,8 @@ function App() {
                           <th>Rank</th>
                           <th>Symbol</th>
                           <th>Liquidity</th>
+                          <th>Score</th>
+                          <th>Score Reason</th>
                           <th>Whitelist</th>
                           <th>Tradable</th>
                           <th>Live</th>
@@ -1393,6 +1402,12 @@ function App() {
                             <td>{item.screener_rank}</td>
                             <td title={item.scanner_reason}>{item.symbol}</td>
                             <td>{item.liquidity_score.toFixed(1)}</td>
+                            <td>
+                              {item.score_total !== null && item.score_total !== undefined
+                                ? `${item.score_total.toFixed(1)}${item.score_threshold ? ` / ${item.score_threshold.toFixed(1)}` : ""} (${item.score_status || "N/A"})`
+                                : "-"}
+                            </td>
+                            <td title={item.scanner_reason}>{item.score_reason || "-"}</td>
                             <td>{item.whitelist_pass ? "PASS" : item.whitelist_state}</td>
                             <td>{item.tradable ? "YES" : "NO"}</td>
                             <td>{item.live_tradable ? "YES" : "NO"}</td>
@@ -1400,7 +1415,7 @@ function App() {
                         ))}
                         {rows.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="empty-row">
+                            <td colSpan={8} className="empty-row">
                               No {formatMarketType(marketType)} candidates.
                             </td>
                           </tr>

@@ -120,6 +120,130 @@ def render_config_page(db):
             curr_tf = str(get_cfg(db, "TIMEFRAME", "1h")).replace('"', '')
             new_tf = st.selectbox("Trading Timeframe", ["5m", "15m", "30m", "1h", "4h", "1d"], index=["5m", "15m", "30m", "1h", "4h", "1d"].index(curr_tf) if curr_tf in ["5m", "15m", "30m", "1h", "4h", "1d"] else 3)
 
+        st.markdown("#### 🧮 Phase 1: Signal Score Gate")
+        st.caption("Configure candidate score threshold and component weights (0-100 scale).")
+
+        sg1, sg2, sg3 = st.columns(3)
+        with sg1:
+            score_gate_enabled = str(get_cfg(db, "ENABLE_SIGNAL_SCORE_GATE", "false")).replace('"', '').lower() == 'true'
+            new_score_gate_enabled = st.checkbox(
+                "Enable Signal Score Gate",
+                value=score_gate_enabled,
+                help="Reject BUY when total score is below minimum threshold."
+            )
+        with sg2:
+            try:
+                score_threshold = float(str(get_cfg(db, "MIN_TOTAL_SCORE_TO_CANDIDATE", 60)))
+            except:
+                score_threshold = 60.0
+            new_score_threshold = st.number_input(
+                "Min Total Score to Candidate",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_threshold,
+                step=1.0,
+                help="Minimum total score required to pass candidate gate."
+            )
+        with sg3:
+            try:
+                score_liq_min_vol = float(str(get_cfg(db, "SCORE_LIQUIDITY_MIN_VOLUME", get_cfg(db, "MIN_VOLUME", 10000))))
+            except:
+                score_liq_min_vol = 10000.0
+            new_score_liq_min_vol = st.number_input(
+                "Score Liquidity Min Volume (USDT)",
+                min_value=1.0,
+                max_value=1000000000.0,
+                value=score_liq_min_vol,
+                step=1000.0,
+                help="Reference quote volume baseline for liquidity score."
+            )
+
+        sw1, sw2, sw3 = st.columns(3)
+        with sw1:
+            try:
+                score_weight_trend = float(str(get_cfg(db, "SCORE_WEIGHT_TREND", 25)))
+            except:
+                score_weight_trend = 25.0
+            new_score_weight_trend = st.number_input(
+                "Weight: Trend",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_weight_trend,
+                step=1.0
+            )
+            try:
+                score_weight_momentum = float(str(get_cfg(db, "SCORE_WEIGHT_MOMENTUM", 20)))
+            except:
+                score_weight_momentum = 20.0
+            new_score_weight_momentum = st.number_input(
+                "Weight: Momentum",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_weight_momentum,
+                step=1.0
+            )
+        with sw2:
+            try:
+                score_weight_volatility = float(str(get_cfg(db, "SCORE_WEIGHT_VOLATILITY", 15)))
+            except:
+                score_weight_volatility = 15.0
+            new_score_weight_volatility = st.number_input(
+                "Weight: Volatility",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_weight_volatility,
+                step=1.0
+            )
+            try:
+                score_weight_liquidity = float(str(get_cfg(db, "SCORE_WEIGHT_LIQUIDITY", 20)))
+            except:
+                score_weight_liquidity = 20.0
+            new_score_weight_liquidity = st.number_input(
+                "Weight: Liquidity",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_weight_liquidity,
+                step=1.0
+            )
+        with sw3:
+            try:
+                score_weight_structure = float(str(get_cfg(db, "SCORE_WEIGHT_STRUCTURE", 10)))
+            except:
+                score_weight_structure = 10.0
+            new_score_weight_structure = st.number_input(
+                "Weight: Structure",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_weight_structure,
+                step=1.0
+            )
+            try:
+                score_weight_portfolio = float(str(get_cfg(db, "SCORE_WEIGHT_PORTFOLIO", 10)))
+            except:
+                score_weight_portfolio = 10.0
+            new_score_weight_portfolio = st.number_input(
+                "Weight: Portfolio",
+                min_value=0.0,
+                max_value=100.0,
+                value=score_weight_portfolio,
+                step=1.0
+            )
+
+        score_weight_total = (
+            new_score_weight_trend
+            + new_score_weight_momentum
+            + new_score_weight_volatility
+            + new_score_weight_liquidity
+            + new_score_weight_structure
+            + new_score_weight_portfolio
+        )
+        if score_weight_total <= 0:
+            st.error("Signal score weights total must be greater than 0.")
+        elif score_weight_total < 80 or score_weight_total > 140:
+            st.warning(f"Signal weight total = {score_weight_total:.1f}. Recommended around 100.")
+        else:
+            st.info(f"Signal weight total = {score_weight_total:.1f} (healthy range).")
+
         st.markdown("#### 📜 Judge Checkbox Protocols")
         cb1, cb2 = st.columns(2)
         with cb1:
@@ -426,6 +550,15 @@ def render_config_page(db):
                     {"key": "TIMEFRAME", "value": new_tf},
                     {"key": "ENABLE_EMA_TREND", "value": str(new_trend).lower()},
                     {"key": "ENABLE_MACD_MOMENTUM", "value": str(new_macd).lower()},
+                    {"key": "ENABLE_SIGNAL_SCORE_GATE", "value": str(new_score_gate_enabled).lower()},
+                    {"key": "MIN_TOTAL_SCORE_TO_CANDIDATE", "value": str(new_score_threshold)},
+                    {"key": "SCORE_LIQUIDITY_MIN_VOLUME", "value": str(new_score_liq_min_vol)},
+                    {"key": "SCORE_WEIGHT_TREND", "value": str(new_score_weight_trend)},
+                    {"key": "SCORE_WEIGHT_MOMENTUM", "value": str(new_score_weight_momentum)},
+                    {"key": "SCORE_WEIGHT_VOLATILITY", "value": str(new_score_weight_volatility)},
+                    {"key": "SCORE_WEIGHT_LIQUIDITY", "value": str(new_score_weight_liquidity)},
+                    {"key": "SCORE_WEIGHT_STRUCTURE", "value": str(new_score_weight_structure)},
+                    {"key": "SCORE_WEIGHT_PORTFOLIO", "value": str(new_score_weight_portfolio)},
                     {"key": "ENABLE_DOWNTREND_PROTECTION", "value": str(new_downtrend_enabled).lower()},
                     {"key": "DOWNTREND_PROTECTION_MODE", "value": new_protection_mode},
                     {"key": "DOWNTREND_AI_BOOST", "value": str(new_ai_boost)},

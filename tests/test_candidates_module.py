@@ -224,6 +224,50 @@ def test_compute_candidate_insights_live_filters_to_live_tradable_and_whitelist(
 
 
 @pytest.mark.unit
+def test_candidate_insights_include_latest_score_breakdown(monkeypatch):
+    db = _FakeDB(
+        rows={
+            "bot_config": [{"key": "TRADING_UNIVERSE", "value": "ALL"}],
+            "fundamental_coins": [
+                {"symbol": "BTC/USDT", "status": "WHITELIST", "manual_score": 9, "notes": "core", "updated_at": None},
+            ],
+            "assets": [{"symbol": "BTC/USDT", "market_type": "crypto", "status": "active", "tags": []}],
+            "signal_score": [
+                {
+                    "symbol": "BTC/USDT",
+                    "run_id": "run-1",
+                    "total_score": 72.5,
+                    "threshold": 60.0,
+                    "passed_threshold": True,
+                    "notes": ["market_trend=UPTREND", "rsi_ok"],
+                    "created_at": "2026-02-20T10:00:00+00:00",
+                }
+            ],
+            "farming_history": [],
+            "system_logs": [],
+        }
+    )
+
+    monkeypatch.setattr(
+        "src.api.candidates.build_candidate_capability_matrix",
+        lambda: [
+            {"market_type": "crypto", "live_enabled": True},
+            {"market_type": "stock", "live_enabled": False},
+            {"market_type": "gold", "live_enabled": False},
+            {"market_type": "silver", "live_enabled": False},
+        ],
+    )
+
+    payload = compute_candidate_insights(db, mode="PAPER", limit=20, log_limit=10)
+    row = next(item for item in payload["candidates"] if item["symbol"] == "BTC/USDT")
+
+    assert row["score_total"] == 72.5
+    assert row["score_threshold"] == 60.0
+    assert row["score_status"] == "PASS"
+    assert "market_trend=UPTREND" in row["score_reason"]
+
+
+@pytest.mark.unit
 def test_universe_snapshot_persist_soft_fails_when_table_missing():
     db = _InsertCaptureDB()
     rows = [

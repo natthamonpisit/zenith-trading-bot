@@ -827,6 +827,7 @@ def compute_candidate_insights(db: Any, mode: str, limit: int, log_limit: int) -
 
     symbol_list = [str(row.get("symbol", "")).upper() for row in candidate_rows if row.get("symbol")]
     asset_map: Dict[str, Dict[str, Any]] = {}
+    latest_score_by_symbol: Dict[str, Dict[str, Any]] = {}
     if symbol_list:
         try:
             asset_rows = (
@@ -844,6 +845,25 @@ def compute_candidate_insights(db: Any, mode: str, limit: int, log_limit: int) -
             }
         except Exception:
             asset_map = {}
+
+        try:
+            score_rows = (
+                db.table("signal_score")
+                .select("symbol,total_score,threshold,passed_threshold,notes,run_id,created_at")
+                .in_("symbol", symbol_list)
+                .order("created_at", desc=True)
+                .limit(max(150, limit * 8))
+                .execute()
+                .data
+                or []
+            )
+            for row in score_rows:
+                symbol = str(row.get("symbol", "")).upper().strip()
+                if not symbol or symbol in latest_score_by_symbol:
+                    continue
+                latest_score_by_symbol[symbol] = row
+        except Exception:
+            latest_score_by_symbol = {}
 
     capability_rows = build_candidate_capability_matrix()
     live_support_map = {str(row["market_type"]): bool(row["live_enabled"]) for row in capability_rows}
@@ -869,6 +889,24 @@ def compute_candidate_insights(db: Any, mode: str, limit: int, log_limit: int) -
         live_ready = bool(live_support_map.get(candidate_type, False))
         live_tradable = tradable and live_ready
 
+        latest_score = latest_score_by_symbol.get(symbol, {})
+        score_total = _to_float(latest_score.get("total_score"), default=-1.0)
+        score_threshold = _to_float(latest_score.get("threshold"), default=-1.0)
+        score_pass = latest_score.get("passed_threshold")
+        score_run_id = latest_score.get("run_id")
+        score_created_at = latest_score.get("created_at")
+        raw_score_notes = latest_score.get("notes")
+        if isinstance(raw_score_notes, list):
+            score_notes = [str(item).strip() for item in raw_score_notes if str(item).strip()]
+        else:
+            score_notes = []
+        score_reason = "; ".join(score_notes[:2]) if score_notes else (
+            "No notes" if score_total >= 0 else "No score snapshot"
+        )
+        score_status = "NO_DATA"
+        if score_total >= 0:
+            score_status = "PASS" if bool(score_pass) else "FAIL"
+
         scanner_reason_parts = [
             f"source={primary_source}",
             f"status={status_val}",
@@ -877,6 +915,14 @@ def compute_candidate_insights(db: Any, mode: str, limit: int, log_limit: int) -
             f"manual_score={manual_score:.1f}",
             f"type={candidate_type}",
         ]
+        if score_total >= 0 and score_threshold >= 0:
+            scanner_reason_parts.append(
+                f"score={score_total:.1f}/{score_threshold:.1f} ({score_status})"
+            )
+        elif score_total >= 0:
+            scanner_reason_parts.append(f"score={score_total:.1f} ({score_status})")
+        if score_reason:
+            scanner_reason_parts.append(f"score_reason={score_reason}")
         note_text = str(row.get("notes", "")).strip()
         if note_text:
             scanner_reason_parts.append(f"note={note_text}")
@@ -897,6 +943,13 @@ def compute_candidate_insights(db: Any, mode: str, limit: int, log_limit: int) -
                 "whitelist_pass": whitelist_pass,
                 "universe_mode": trading_universe,
                 "manual_score": round(manual_score, 2),
+                "score_total": round(score_total, 2) if score_total >= 0 else None,
+                "score_threshold": round(score_threshold, 2) if score_threshold >= 0 else None,
+                "score_status": score_status,
+                "score_reason": score_reason,
+                "score_notes": score_notes,
+                "score_run_id": score_run_id,
+                "score_updated_at": score_created_at,
                 "scanner_reason": " | ".join(scanner_reason_parts),
                 "live_tradable": live_tradable,
                 "live_block_reason": None if live_tradable else (reject_reason or "LIVE_CONNECTOR_NOT_READY"),

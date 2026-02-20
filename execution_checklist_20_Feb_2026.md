@@ -9,6 +9,11 @@
 - ทุกข้อมี Definition of Done (DoD)
 - ทำทีละข้อ, เทสทีละข้อ, ค่อยไปข้อถัดไป
 
+## Safety Gates (Mandatory)
+- ก่อนแก้โค้ด: ต้องระบุ scope + risk + rollback
+- ระหว่างแก้โค้ด: แก้ทีละ batch เล็กและตรวจ syntax ทุก batch
+- ก่อน push: ต้องผ่าน targeted tests + regression ที่เกี่ยวข้อง
+
 ---
 
 ## Phase 1A: Stabilize สิ่งที่เพิ่มแล้ว (ตอนนี้)
@@ -60,15 +65,15 @@
 ## Phase 1B: Config + Explainability (ต่อเนื่อง)
 
 ### 7) Dashboard Config (Score Panel)
-- [ ] เพิ่ม section ตั้งค่า `MIN_TOTAL_SCORE_TO_CANDIDATE`
-- [ ] เพิ่ม toggle `ENABLE_SIGNAL_SCORE_GATE`
-- [ ] เพิ่ม inputs weights ราย component
+- [x] เพิ่ม section ตั้งค่า `MIN_TOTAL_SCORE_TO_CANDIDATE`
+- [x] เพิ่ม toggle `ENABLE_SIGNAL_SCORE_GATE`
+- [x] เพิ่ม inputs weights ราย component
 - DoD:
   - ปรับ score behavior ได้จาก UI โดยไม่แก้ env/code
 
 ### 8) Candidate Insights Enrichment
-- [ ] เพิ่มข้อมูล score ล่าสุดต่อ symbol ใน candidates insight
-- [ ] แสดงเหตุผลหลักจาก score notes
+- [x] เพิ่มข้อมูล score ล่าสุดต่อ symbol ใน candidates insight
+- [x] แสดงเหตุผลหลักจาก score notes
 - DoD:
   - เห็นได้ว่า symbol ไหนผ่าน/ไม่ผ่าน score threshold เพราะอะไร
 
@@ -77,14 +82,14 @@
 ## Phase 2: Order Plan + TP Ladder
 
 ### 9) Order Plan Model
-- [ ] เพิ่ม `order_plan` schema (entry/SL/TP/trailing mode)
-- [ ] เชื่อม execution ให้รับจาก plan object
+- [x] เพิ่ม `order_plan` schema (entry/SL/TP/trailing mode)
+- [x] เชื่อม execution ให้รับจาก plan object
 - DoD:
   - มีชั้นวางแผนออเดอร์ชัดก่อนยิง order จริง
 
 ### 10) TP Ladder + Breakeven
-- [ ] เพิ่ม partial TP levels
-- [ ] เพิ่ม breakeven promotion rule
+- [x] เพิ่ม partial TP levels
+- [x] เพิ่ม breakeven promotion rule
 - DoD:
   - ปิดกำไรแบบเป็นขั้นและเลื่อน stop ตามแผน
 
@@ -93,14 +98,14 @@
 ## Phase 3: Validation + Tuning
 
 ### 11) Walk-forward Validation
-- [ ] สร้าง pipeline สำหรับ backtest split แบบ time-series
-- [ ] รายงาน metrics (win rate, max DD, expectancy)
+- [x] สร้าง pipeline สำหรับ backtest split แบบ time-series
+- [x] รายงาน metrics (win rate, max DD, expectancy)
 - DoD:
   - ใช้ข้อมูลจริงช่วยปรับ threshold/weights อย่างมีหลักฐาน
 
 ### 12) AI Advisor for Tuning (Safe Mode)
-- [ ] ให้ AI เสนอ config package
-- [ ] deterministic validator ตรวจก่อน apply
+- [x] ให้ AI เสนอ config package
+- [x] deterministic validator ตรวจก่อน apply
 - DoD:
   - AI ช่วย optimize ได้แต่ไม่ bypass guardrails
 
@@ -113,4 +118,9 @@
 - [x] Step 4 เสร็จแล้ว: Config Hardening (Score)
 - [x] Step 5 เสร็จแล้ว: Replay/API Coverage
 - [x] Step 6 เสร็จแล้ว: Tests Expansion
-- [ ] Step 7 กำลังรอเริ่ม: Dashboard Config (Score Panel)
+- [x] Step 7 เสร็จแล้ว: Dashboard Config (Score Panel)
+- [x] Step 8 เสร็จแล้ว: Candidate Insights Enrichment
+- [x] Step 9 เสร็จแล้ว: Order Plan Model
+- [x] Step 10 เสร็จแล้ว: TP Ladder + Breakeven
+- [x] Step 11 เสร็จแล้ว: Walk-forward Validation (Phase 3 core)
+- [x] Step 12 เสร็จแล้ว: AI Advisor for Tuning (Safe Mode)

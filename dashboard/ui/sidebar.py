@@ -46,6 +46,7 @@ def render_sidebar(db):
             'Capital Management',
             'Strategy Config',
             'Order Plans',
+            'Phase 3 Lab',
             'Fundamental Lab',
             'Trade History',
             'Session History',

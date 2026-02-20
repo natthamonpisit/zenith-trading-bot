@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.database import get_db
+from src.ops.phase3_metrics import increment_counter
 
 
 def _stable_hash(payload: Any) -> str:
@@ -58,6 +59,22 @@ class TelemetryTracker:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def _update_by_id(self, table: str, row_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.db:
+            return {"ok": False, "error": "db_not_configured"}
+        if not row_id:
+            return {"ok": False, "error": "id_required"}
+        if not payload:
+            return {"ok": True, "row": None}
+        try:
+            result = self.db.table(table).update(payload).eq("id", row_id).execute()
+            row = result.data[0] if result.data else None
+            return {"ok": True, "row": row}
+        except Exception as exc:
+            if table in {"walk_forward_runs", "walk_forward_fold_results", "tuning_proposals", "tuning_proposal_validations"}:
+                increment_counter("phase3_query_error_count", 1)
+            return {"ok": False, "error": str(exc)}
+
     def _query_with_filters(
         self,
         table: str,
@@ -77,6 +94,8 @@ class TelemetryTracker:
             result = query.execute()
             return result.data or []
         except Exception:
+            if table in {"walk_forward_runs", "walk_forward_fold_results", "tuning_proposals", "tuning_proposal_validations"}:
+                increment_counter("phase3_query_error_count", 1)
             return []
 
     def track_ai_decision(
@@ -240,6 +259,148 @@ class TelemetryTracker:
         }
         return self._insert("signal_score", payload)
 
+    def track_walk_forward_run(
+        self,
+        phase3_run_key: str,
+        status: str,
+        run_id: Optional[str] = None,
+        timeframe: Optional[str] = None,
+        dataset_scope: Optional[str] = None,
+        sample_size: int = 0,
+        fold_count: int = 0,
+        metrics_json: Optional[Dict[str, Any]] = None,
+        params_json: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "PENDING").upper()
+        payload = {
+            "run_id": run_id,
+            "phase3_run_key": str(phase3_run_key),
+            "timeframe": timeframe,
+            "dataset_scope": dataset_scope,
+            "sample_size": int(sample_size or 0),
+            "fold_count": int(fold_count or 0),
+            "status": normalized_status,
+            "metrics_json": metrics_json or {},
+            "params_json": params_json or {},
+            "error_message": error_message,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "updated_at": _utc_now_iso(),
+        }
+        return self._insert("walk_forward_runs", payload)
+
+    def track_walk_forward_fold_results(
+        self,
+        walk_forward_run_id: str,
+        fold_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        payload_rows: List[Dict[str, Any]] = []
+        for row in fold_rows:
+            payload_rows.append(
+                {
+                    "walk_forward_run_id": str(walk_forward_run_id),
+                    "fold_index": int(row.get("fold_index", 0) or 0),
+                    "train_from": row.get("train_from"),
+                    "train_to": row.get("train_to"),
+                    "test_from": row.get("test_from"),
+                    "test_to": row.get("test_to"),
+                    "sample_size": int(row.get("sample_size", 0) or 0),
+                    "metrics_json": row.get("metrics_json") or {},
+                    "notes": row.get("notes"),
+                    "updated_at": _utc_now_iso(),
+                }
+            )
+        return self._insert_many("walk_forward_fold_results", payload_rows)
+
+    def track_tuning_proposal(
+        self,
+        status: str,
+        proposal_payload: Dict[str, Any],
+        walk_forward_run_id: Optional[str] = None,
+        proposed_by: str = "AI_ADVISOR",
+        config_snapshot: Optional[Dict[str, Any]] = None,
+        config_hash: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload = {
+            "walk_forward_run_id": walk_forward_run_id,
+            "status": str(status or "DRAFT").upper(),
+            "proposed_by": str(proposed_by or "AI_ADVISOR"),
+            "proposal_payload": proposal_payload or {},
+            "config_snapshot": config_snapshot or {},
+            "config_hash": config_hash,
+            "notes": notes,
+            "updated_at": _utc_now_iso(),
+        }
+        return self._insert("tuning_proposals", payload)
+
+    def track_tuning_proposal_validation(
+        self,
+        tuning_proposal_id: str,
+        passed: bool,
+        rule_code: str,
+        message: str,
+        severity: str = "ERROR",
+        validator: str = "DETERMINISTIC_GUARD",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        normalized_severity = str(severity or "ERROR").upper()
+        payload = {
+            "tuning_proposal_id": str(tuning_proposal_id),
+            "validator": str(validator or "DETERMINISTIC_GUARD"),
+            "passed": bool(passed),
+            "severity": normalized_severity,
+            "rule_code": str(rule_code or ""),
+            "message": str(message or ""),
+            "details": details or {},
+            "updated_at": _utc_now_iso(),
+        }
+        return self._insert("tuning_proposal_validations", payload)
+
+    def update_walk_forward_run(
+        self,
+        walk_forward_run_id: str,
+        status: Optional[str] = None,
+        sample_size: Optional[int] = None,
+        fold_count: Optional[int] = None,
+        metrics_json: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None,
+        completed_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"updated_at": _utc_now_iso()}
+        if status is not None:
+            payload["status"] = str(status).upper()
+        if sample_size is not None:
+            payload["sample_size"] = int(sample_size)
+        if fold_count is not None:
+            payload["fold_count"] = int(fold_count)
+        if metrics_json is not None:
+            payload["metrics_json"] = metrics_json
+        if error_message is not None:
+            payload["error_message"] = error_message
+        if completed_at is not None:
+            payload["completed_at"] = completed_at
+        return self._update_by_id("walk_forward_runs", walk_forward_run_id, payload)
+
+    def update_tuning_proposal(
+        self,
+        tuning_proposal_id: str,
+        status: Optional[str] = None,
+        notes: Optional[str] = None,
+        proposal_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"updated_at": _utc_now_iso()}
+        if status is not None:
+            payload["status"] = str(status).upper()
+        if notes is not None:
+            payload["notes"] = notes
+        if proposal_payload is not None:
+            payload["proposal_payload"] = proposal_payload
+        return self._update_by_id("tuning_proposals", tuning_proposal_id, payload)
+
     def get_ai_decisions(
         self,
         symbol: Optional[str] = None,
@@ -349,7 +510,130 @@ class TelemetryTracker:
             limit=limit,
         )
 
+    def get_walk_forward_runs(
+        self,
+        run_id: Optional[str] = None,
+        phase3_run_key: Optional[str] = None,
+        status: Optional[str] = None,
+        timeframe: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        return self._query_with_filters(
+            table="walk_forward_runs",
+            select=(
+                "id,run_id,phase3_run_key,timeframe,dataset_scope,sample_size,fold_count,status,metrics_json,params_json,"
+                "error_message,started_at,completed_at,created_at"
+            ),
+            filters={
+                "run_id": run_id,
+                "phase3_run_key": phase3_run_key,
+                "status": status,
+                "timeframe": timeframe,
+            },
+            limit=limit,
+        )
+
+    def get_walk_forward_fold_results(
+        self,
+        walk_forward_run_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        rows = self._query_with_filters(
+            table="walk_forward_fold_results",
+            select=(
+                "id,walk_forward_run_id,fold_index,train_from,train_to,test_from,test_to,sample_size,metrics_json,notes,created_at"
+            ),
+            filters={"walk_forward_run_id": walk_forward_run_id},
+            order_by="fold_index",
+            limit=limit,
+        )
+        return sorted(rows, key=lambda item: int(item.get("fold_index") or 0))
+
+    def get_tuning_proposals(
+        self,
+        walk_forward_run_id: Optional[str] = None,
+        status: Optional[str] = None,
+        proposed_by: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        return self._query_with_filters(
+            table="tuning_proposals",
+            select=(
+                "id,walk_forward_run_id,status,proposed_by,proposal_payload,config_snapshot,config_hash,notes,created_at"
+            ),
+            filters={
+                "walk_forward_run_id": walk_forward_run_id,
+                "status": status,
+                "proposed_by": proposed_by,
+            },
+            limit=limit,
+        )
+
+    def get_tuning_proposal_by_id(self, tuning_proposal_id: str) -> Optional[Dict[str, Any]]:
+        rows = self._query_with_filters(
+            table="tuning_proposals",
+            select="id,walk_forward_run_id,status,proposed_by,proposal_payload,config_snapshot,config_hash,notes,created_at",
+            filters={"id": tuning_proposal_id},
+            limit=1,
+        )
+        return rows[0] if rows else None
+
+    def get_walk_forward_run_by_id(self, walk_forward_run_id: str) -> Optional[Dict[str, Any]]:
+        rows = self._query_with_filters(
+            table="walk_forward_runs",
+            select=(
+                "id,run_id,phase3_run_key,timeframe,dataset_scope,sample_size,fold_count,status,metrics_json,params_json,"
+                "error_message,started_at,completed_at,created_at"
+            ),
+            filters={"id": walk_forward_run_id},
+            limit=1,
+        )
+        return rows[0] if rows else None
+
+    def get_tuning_proposal_validations(
+        self,
+        tuning_proposal_id: Optional[str] = None,
+        passed: Optional[bool] = None,
+        validator: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        return self._query_with_filters(
+            table="tuning_proposal_validations",
+            select=(
+                "id,tuning_proposal_id,validator,passed,severity,rule_code,message,details,created_at"
+            ),
+            filters={
+                "tuning_proposal_id": tuning_proposal_id,
+                "passed": passed,
+                "validator": validator,
+            },
+            limit=limit,
+        )
+
     def get_replay_bundle(self, run_id: str, limit: int = 200) -> Dict[str, Any]:
+        walk_forward_runs = self.get_walk_forward_runs(run_id=run_id, limit=min(limit, 200))
+        walk_forward_run_ids = [row.get("id") for row in walk_forward_runs if row.get("id")]
+
+        walk_forward_folds: List[Dict[str, Any]] = []
+        tuning_proposals: List[Dict[str, Any]] = []
+        tuning_validations: List[Dict[str, Any]] = []
+
+        for walk_forward_run_id in walk_forward_run_ids[:10]:
+            walk_forward_folds.extend(
+                self.get_walk_forward_fold_results(walk_forward_run_id=walk_forward_run_id, limit=min(limit, 100))
+            )
+            tuning_proposals.extend(
+                self.get_tuning_proposals(walk_forward_run_id=walk_forward_run_id, limit=min(limit, 100))
+            )
+
+        for proposal in tuning_proposals[:20]:
+            proposal_id = proposal.get("id")
+            if not proposal_id:
+                continue
+            tuning_validations.extend(
+                self.get_tuning_proposal_validations(tuning_proposal_id=proposal_id, limit=min(limit, 100))
+            )
+
         return {
             "run_id": run_id,
             "ai_decisions": self.get_ai_decisions(run_id=run_id, limit=limit),
@@ -358,4 +642,8 @@ class TelemetryTracker:
             "feature_snapshots": self.get_feature_snapshots(run_id=run_id, limit=limit),
             "signal_scores": self.get_signal_scores(run_id=run_id, limit=limit),
             "order_plans": self.get_order_plans(run_id=run_id, limit=limit),
+            "walk_forward_runs": walk_forward_runs,
+            "walk_forward_fold_results": walk_forward_folds,
+            "tuning_proposals": tuning_proposals,
+            "tuning_proposal_validations": tuning_validations,
         }

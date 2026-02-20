@@ -30,6 +30,7 @@ from src.contracts.api_contracts import (
 from src.contracts.error_codes import ErrorCode, build_api_error
 from src.database import get_db
 from src.ops.cutover import CutoverService
+from src.ops.phase3_metrics import snapshot_metrics
 from src.ops.hardening import HardeningService, compare_dashboard_summary
 from src.api.candidates import (
     compute_candidate_insights,
@@ -37,6 +38,8 @@ from src.api.candidates import (
 )
 from src.roles.job_analysis import Strategist
 from src.roles.job_price import PriceSpy
+from src.roles.tuning_advisor import TuningAdvisor
+from src.roles.walk_forward import WalkForwardEngine
 from src.telemetry.tracker import TelemetryTracker
 from src.utils.rate_limiter import RateLimiter
 
@@ -1192,6 +1195,139 @@ def create_app() -> FastAPI:
 
         return _json_success(data=payload, request_id=_request_id_from(request))
 
+    @app.post("/api/phase3/walk-forward/run")
+    async def post_phase3_walk_forward_run(
+        request: Request,
+        run_id: Optional[str] = Query(default=None, min_length=1, max_length=128),
+        timeframe: str = Query(default="1h", min_length=2, max_length=8),
+        dataset_scope: str = Query(default="GLOBAL", min_length=2, max_length=64),
+        fold_count: int = Query(default=5, ge=1, le=20),
+        min_sample_size: int = Query(default=50, ge=10, le=5000),
+        min_train_size: int = Query(default=30, ge=10, le=5000),
+        min_test_size: int = Query(default=10, ge=5, le=1000),
+        row_limit: int = Query(default=3000, ge=50, le=5000),
+        phase3_run_key: Optional[str] = Query(default=None, min_length=1, max_length=160),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        engine = WalkForwardEngine(db=db)
+        payload = engine.run_validation(
+            run_id=run_id,
+            timeframe=timeframe,
+            dataset_scope=dataset_scope,
+            fold_count=fold_count,
+            min_sample_size=min_sample_size,
+            min_train_size=min_train_size,
+            min_test_size=min_test_size,
+            row_limit=row_limit,
+            phase3_run_key=phase3_run_key,
+        )
+        if not payload.get("ok"):
+            raise APIRequestError(
+                code=ErrorCode.E_UPSTREAM_AI_503,
+                message="walk-forward run failed",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                details={"reason": payload.get("error", "unknown")},
+            )
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.post("/api/phase3/tuning/propose")
+    async def post_phase3_tuning_propose(
+        request: Request,
+        walk_forward_run_id: str = Query(..., min_length=3, max_length=64),
+        actor: str = Query(default="AI_ADVISOR", min_length=2, max_length=64),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        advisor = TuningAdvisor(db=db)
+        normalized_run_id = _validate_uuid_or_none(walk_forward_run_id, "walk_forward_run_id")
+        payload = advisor.create_proposal_for_walk_forward_run(
+            walk_forward_run_id=normalized_run_id or walk_forward_run_id,
+            proposed_by=actor,
+        )
+        if not payload.get("ok"):
+            raise APIRequestError(
+                code=ErrorCode.E_VALIDATION_400,
+                message="unable to generate tuning proposal",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                details={"reason": payload.get("error", "unknown")},
+            )
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.post("/api/phase3/tuning/transition")
+    async def post_phase3_tuning_transition(
+        request: Request,
+        tuning_proposal_id: str = Query(..., min_length=3, max_length=64),
+        target_status: str = Query(..., min_length=3, max_length=40),
+        actor: str = Query(default="operator", min_length=2, max_length=64),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        advisor = TuningAdvisor(db=db)
+        normalized_proposal_id = _validate_uuid_or_none(tuning_proposal_id, "tuning_proposal_id")
+        payload = advisor.transition_proposal_status(
+            tuning_proposal_id=normalized_proposal_id or tuning_proposal_id,
+            target_status=target_status,
+            actor=actor,
+        )
+        if not payload.get("ok"):
+            raise APIRequestError(
+                code=ErrorCode.E_VALIDATION_400,
+                message="invalid tuning proposal status transition",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                details=payload.get("details") or {"reason": payload.get("error", "unknown")},
+            )
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.post("/api/phase3/tuning/apply")
+    async def post_phase3_tuning_apply(
+        request: Request,
+        tuning_proposal_id: str = Query(..., min_length=3, max_length=64),
+        actor: str = Query(default="operator", min_length=2, max_length=64),
+        dry_run: bool = Query(default=False),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        advisor = TuningAdvisor(db=db)
+        normalized_proposal_id = _validate_uuid_or_none(tuning_proposal_id, "tuning_proposal_id")
+        payload = advisor.apply_proposal(
+            tuning_proposal_id=normalized_proposal_id or tuning_proposal_id,
+            actor=actor,
+            dry_run=dry_run,
+        )
+        if not payload.get("ok"):
+            raise APIRequestError(
+                code=ErrorCode.E_VALIDATION_400,
+                message="unable to apply tuning proposal",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                details={"reason": payload.get("error", "unknown"), "status": payload.get("status")},
+            )
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
     @app.get("/api/signals")
     async def get_signals(
         request: Request,
@@ -1422,6 +1558,229 @@ def create_app() -> FastAPI:
             limit=limit,
         )
         return _json_success(data=rows, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/walk-forward-runs")
+    async def replay_walk_forward_runs(
+        request: Request,
+        run_id: Optional[str] = Query(default=None, min_length=1, max_length=128),
+        phase3_run_key: Optional[str] = Query(default=None, min_length=1, max_length=160),
+        status_filter: Optional[str] = Query(default=None, alias="status"),
+        timeframe: Optional[str] = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=300),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        rows = tracker.get_walk_forward_runs(
+            run_id=run_id,
+            phase3_run_key=phase3_run_key,
+            status=status_filter.upper() if status_filter else None,
+            timeframe=timeframe,
+            limit=limit,
+        )
+        return _json_success(data=rows, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/walk-forward-folds")
+    async def replay_walk_forward_folds(
+        request: Request,
+        walk_forward_run_id: Optional[str] = Query(default=None, min_length=3, max_length=64),
+        limit: int = Query(default=300, ge=1, le=600),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        normalized_run_id = _validate_uuid_or_none(walk_forward_run_id, "walk_forward_run_id")
+        rows = tracker.get_walk_forward_fold_results(
+            walk_forward_run_id=normalized_run_id,
+            limit=limit,
+        )
+        return _json_success(data=rows, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/tuning-proposals")
+    async def replay_tuning_proposals(
+        request: Request,
+        walk_forward_run_id: Optional[str] = Query(default=None, min_length=3, max_length=64),
+        status_filter: Optional[str] = Query(default=None, alias="status"),
+        proposed_by: Optional[str] = Query(default=None, min_length=1, max_length=64),
+        limit: int = Query(default=200, ge=1, le=300),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        normalized_run_id = _validate_uuid_or_none(walk_forward_run_id, "walk_forward_run_id")
+        rows = tracker.get_tuning_proposals(
+            walk_forward_run_id=normalized_run_id,
+            status=status_filter.upper() if status_filter else None,
+            proposed_by=proposed_by,
+            limit=limit,
+        )
+        return _json_success(data=rows, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/tuning-validations")
+    async def replay_tuning_validations(
+        request: Request,
+        tuning_proposal_id: Optional[str] = Query(default=None, min_length=3, max_length=64),
+        passed: Optional[bool] = Query(default=None),
+        validator: Optional[str] = Query(default=None, min_length=1, max_length=64),
+        limit: int = Query(default=300, ge=1, le=600),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        normalized_proposal_id = _validate_uuid_or_none(tuning_proposal_id, "tuning_proposal_id")
+        rows = tracker.get_tuning_proposal_validations(
+            tuning_proposal_id=normalized_proposal_id,
+            passed=passed,
+            validator=validator,
+            limit=limit,
+        )
+        return _json_success(data=rows, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/score-decomposition")
+    async def replay_score_decomposition(
+        request: Request,
+        symbol: Optional[str] = Query(default=None),
+        run_id: Optional[str] = Query(default=None, min_length=1, max_length=128),
+        timeframe: Optional[str] = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=300),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        rows = tracker.get_signal_scores(
+            symbol=symbol.upper() if symbol else None,
+            run_id=run_id,
+            timeframe=timeframe,
+            limit=limit,
+        )
+        decomposition_rows = []
+        for row in rows:
+            component_scores = row.get("component_scores") if isinstance(row.get("component_scores"), dict) else {}
+            weighted_scores = row.get("weighted_scores") if isinstance(row.get("weighted_scores"), dict) else {}
+            weights = row.get("weights") if isinstance(row.get("weights"), dict) else {}
+            components = []
+            for key in sorted(set(component_scores.keys()) | set(weighted_scores.keys()) | set(weights.keys())):
+                components.append(
+                    {
+                        "component": key,
+                        "component_score": component_scores.get(key),
+                        "weighted_score": weighted_scores.get(key),
+                        "weight": weights.get(key),
+                    }
+                )
+            components.sort(
+                key=lambda item: _to_float(item.get("weighted_score"), default=0.0),
+                reverse=True,
+            )
+            decomposition_rows.append(
+                {
+                    "id": row.get("id"),
+                    "run_id": row.get("run_id"),
+                    "symbol": row.get("symbol"),
+                    "timeframe": row.get("timeframe"),
+                    "total_score": row.get("total_score"),
+                    "threshold": row.get("threshold"),
+                    "passed_threshold": row.get("passed_threshold"),
+                    "notes": row.get("notes") if isinstance(row.get("notes"), list) else [],
+                    "components": components,
+                    "created_at": row.get("created_at"),
+                }
+            )
+
+        return _json_success(data=decomposition_rows, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/decision-reasons")
+    async def replay_decision_reasons(
+        request: Request,
+        symbol: Optional[str] = Query(default=None),
+        run_id: Optional[str] = Query(default=None, min_length=1, max_length=128),
+        tuning_proposal_id: Optional[str] = Query(default=None, min_length=3, max_length=64),
+        limit: int = Query(default=50, ge=1, le=300),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tracker = TelemetryTracker(db=db)
+        normalized_proposal_id = _validate_uuid_or_none(tuning_proposal_id, "tuning_proposal_id")
+        ai_rows = tracker.get_ai_decisions(
+            symbol=symbol.upper() if symbol else None,
+            run_id=run_id,
+            limit=limit,
+        )
+        rule_rows = tracker.get_rule_evaluations(
+            symbol=symbol.upper() if symbol else None,
+            run_id=run_id,
+            limit=limit,
+        )
+        score_rows = tracker.get_signal_scores(
+            symbol=symbol.upper() if symbol else None,
+            run_id=run_id,
+            limit=limit,
+        )
+        tuning_rows = tracker.get_tuning_proposal_validations(
+            tuning_proposal_id=normalized_proposal_id,
+            limit=limit,
+        )
+        payload = {
+            "symbol": symbol.upper() if symbol else None,
+            "run_id": run_id,
+            "ai_decisions": ai_rows,
+            "rule_evaluations": rule_rows,
+            "score_notes": [
+                {
+                    "id": row.get("id"),
+                    "symbol": row.get("symbol"),
+                    "run_id": row.get("run_id"),
+                    "total_score": row.get("total_score"),
+                    "threshold": row.get("threshold"),
+                    "passed_threshold": row.get("passed_threshold"),
+                    "notes": row.get("notes") if isinstance(row.get("notes"), list) else [],
+                    "created_at": row.get("created_at"),
+                }
+                for row in score_rows
+            ],
+            "tuning_validations": tuning_rows,
+        }
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.get("/api/replay/phase3-metrics")
+    async def replay_phase3_metrics(request: Request):
+        return _json_success(data=snapshot_metrics(), request_id=_request_id_from(request))
 
     @app.get("/api/replay/post-trades")
     async def replay_post_trades(
