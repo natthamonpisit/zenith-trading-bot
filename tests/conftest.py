@@ -44,24 +44,27 @@ def mock_db():
 @pytest.fixture
 def mock_db_with_config(mock_db):
     """Mock database with bot_config table populated"""
+    config_values = {
+        'TRADING_MODE': 'PAPER',
+        'RSI_THRESHOLD': '75',
+        'AI_CONF_THRESHOLD': '60',
+        'MAX_OPEN_POSITIONS': '5',
+        'POSITION_SIZE_PCT': '5.0',
+        'MAX_RISK_PER_TRADE': '10.0',
+        'ENABLE_EMA_TREND': 'false',
+        'ENABLE_MACD_MOMENTUM': 'false',
+        'MIN_VOLUME': '10000',
+        'TRADING_UNIVERSE': 'ALL',
+        'WHITELIST_POLICY': 'RELAXED',
+        'RADAR_SCAN_LIMIT': '100',
+        'TIMEFRAME': '1h',
+        'TRAILING_STOP_ENABLED': 'true',
+        'TRAILING_STOP_PCT': '3.0',
+        'MIN_PROFIT_TO_TRAIL_PCT': '1.0',
+    }
+
     def get_config_value(key):
         """Helper to return config values"""
-        config_values = {
-            'TRADING_MODE': 'PAPER',
-            'RSI_THRESHOLD': '75',
-            'AI_CONF_THRESHOLD': '60',
-            'MAX_OPEN_POSITIONS': '5',
-            'POSITION_SIZE_PCT': '5.0',
-            'MAX_RISK_PER_TRADE': '10.0',
-            'ENABLE_EMA_TREND': 'false',
-            'ENABLE_MACD_MOMENTUM': 'false',
-            'MIN_VOLUME': '50000',
-            'TRADING_UNIVERSE': 'ALL',
-            'TIMEFRAME': '1h',
-            'TRAILING_STOP_ENABLED': 'true',
-            'TRAILING_STOP_PCT': '3.0',
-            'MIN_PROFIT_TO_TRAIL_PCT': '1.0',
-        }
         return config_values.get(key, '')
     
     # Override table() for bot_config queries
@@ -78,9 +81,7 @@ def mock_db_with_config(mock_db):
                     value = get_config_value(key)
                     return Mock(data=[{'key': key, 'value': value}])
                 # Return all config if no filter
-                return Mock(data=[
-                    {'key': k, 'value': v} for k, v in get_config_value.__code__.co_consts[1].items()
-                ])
+                return Mock(data=[{'key': k, 'value': v} for k, v in config_values.items()])
             
             table_mock.execute = Mock(side_effect=execute_config)
         

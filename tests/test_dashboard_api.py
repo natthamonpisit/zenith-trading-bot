@@ -2,7 +2,12 @@ from fastapi.testclient import TestClient
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from src.api.server import SummaryDTO, _derive_bot_status, create_app
+from src.api.server import (
+    SummaryDTO,
+    _derive_bot_status,
+    create_app,
+)
+from src.api.candidates import build_candidate_capability_matrix, scan_non_crypto_candidates
 
 
 def test_health_envelope(monkeypatch):
@@ -186,6 +191,114 @@ def test_events_endpoint_envelope(monkeypatch):
     body = response.json()
     assert body["success"] is True
     assert body["data"][0]["role"] == "Judge"
+
+
+def test_candidates_insights_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+    monkeypatch.setattr("src.api.server._resolve_mode", lambda db, mode: "LIVE")
+    monkeypatch.setattr(
+        "src.api.server.compute_candidate_insights",
+        lambda db, mode, limit, log_limit: {
+            "mode": mode,
+            "primary_source": "fundamental_coins",
+            "source_counts": {"fundamental_coins_total": 3, "assets_active_total": 2},
+            "total_candidates_raw": 3,
+            "total_candidates_visible": 1,
+            "why_limited_note": "Candidate list currently follows fundamental_coins table.",
+            "latest_scan": None,
+            "candidate_types": [],
+            "capabilities": [],
+            "agents": [],
+            "scanner_logs": [],
+            "candidates": [],
+        },
+    )
+
+    response = client.get("/api/candidates/insights", params={"mode": "LIVE", "limit": 80, "log_limit": 20})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["mode"] == "LIVE"
+    assert body["data"]["total_candidates_visible"] == 1
+
+
+def test_candidates_scan_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+    monkeypatch.setattr("src.api.server._resolve_mode", lambda db, mode: "PAPER")
+    monkeypatch.setattr("src.api.server._get_price_spy", lambda: object())
+    monkeypatch.setattr(
+        "src.api.server.run_manual_candidate_scan",
+        lambda db, spy, mode, limit, include_non_crypto, deep_scan, actor: {
+            "scan_run_id": 101,
+            "status": "COMPLETED",
+            "mode": mode,
+            "actor": actor,
+            "scanned_total": 25,
+            "qualified_total": 9,
+            "qualified_symbols": ["BTC/USDT", "AAPL", "XAUUSD=X"],
+            "counts_by_type": {"crypto": 6, "stock": 2, "gold": 1, "silver": 0, "other": 0},
+            "sources": {"crypto_radar": 20, "non_crypto_api": 5},
+            "include_non_crypto": include_non_crypto,
+            "deep_scan": deep_scan,
+            "message": "ok",
+        },
+    )
+
+    response = client.post(
+        "/api/candidates/scan",
+        params={"mode": "PAPER", "limit": 60, "include_non_crypto": True, "deep_scan": False},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "COMPLETED"
+    assert body["data"]["qualified_total"] == 9
+
+
+def test_candidate_capability_matrix_honors_custom_connectors(monkeypatch):
+    monkeypatch.setenv("BINANCE_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_SECRET", "secret")
+    monkeypatch.setenv("STOCK_API_NAME", "Alpaca")
+    monkeypatch.setenv("STOCK_API_URL", "https://api.alpaca.markets")
+    monkeypatch.setenv("GOLD_API_NAME", "MetalsAPI")
+    monkeypatch.setenv("GOLD_API_URL", "https://metals.example.com")
+    monkeypatch.delenv("SILVER_API_NAME", raising=False)
+    monkeypatch.delenv("SILVER_API_URL", raising=False)
+    monkeypatch.delenv("SILVER_API_KEY", raising=False)
+
+    rows = build_candidate_capability_matrix()
+    lookup = {row["market_type"]: row for row in rows}
+
+    assert lookup["crypto"]["live_enabled"] is True
+    assert lookup["stock"]["live_enabled"] is True
+    assert lookup["gold"]["live_enabled"] is True
+    assert lookup["silver"]["live_enabled"] is False
+    assert lookup["silver"]["api_name"] == "Yahoo Finance (scan only)"
+
+
+def test_non_crypto_scan_preview_available_without_external_api(monkeypatch):
+    monkeypatch.setenv("STOCK_SCAN_SYMBOLS", "AAPL,MSFT")
+    monkeypatch.setenv("GOLD_SCAN_SYMBOLS", "XAUUSD=X")
+    monkeypatch.setenv("SILVER_SCAN_SYMBOLS", "XAGUSD=X")
+
+    rows = scan_non_crypto_candidates(limit_per_type=2, use_quote_api=False)
+    assert len(rows) >= 4
+
+    by_type = {}
+    for row in rows:
+        by_type.setdefault(row["candidate_type"], 0)
+        by_type[row["candidate_type"]] += 1
+
+    assert by_type["stock"] >= 2
+    assert by_type["gold"] >= 1
+    assert by_type["silver"] >= 1
+    assert all(int(row.get("manual_score", 0)) >= 5 for row in rows)
 
 
 def test_cors_allows_localhost_3000_in_dev(monkeypatch):

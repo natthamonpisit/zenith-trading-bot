@@ -62,6 +62,109 @@ type CandidateData = {
   reject_reason: string | null;
 };
 
+type CandidateInsightItem = {
+  symbol: string;
+  screener_rank: number;
+  liquidity_score: number;
+  tradable: boolean;
+  reject_reason: string | null;
+  candidate_type: string;
+  source: string;
+  fundamental_status: string;
+  whitelist_state: string;
+  whitelist_pass: boolean;
+  universe_mode: string;
+  manual_score: number;
+  scanner_reason: string;
+  live_tradable: boolean;
+  live_block_reason: string | null;
+};
+
+type CandidateTypeSummary = {
+  market_type: string;
+  total: number;
+  live_tradable: number;
+  description: string;
+};
+
+type CandidateCapability = {
+  market_type: string;
+  paper_enabled: boolean;
+  live_enabled: boolean;
+  api_name: string;
+  connected: boolean;
+  ready: boolean;
+  detail: string;
+};
+
+type CandidateAgent = {
+  agent_id: string;
+  name: string;
+  agent_type: string;
+  model_or_engine: string;
+  functions: string[];
+  libraries: string[];
+  help_text: string;
+  candidate_scope: boolean;
+};
+
+type CandidateLog = {
+  id: string;
+  level: string;
+  role: string;
+  message: string;
+  created_at: string | null;
+};
+
+type CandidateScanSummary = {
+  scan_run_id: string;
+  start_time: string | null;
+  end_time: string | null;
+  status: string;
+  universe_size: number;
+  passed_count: number;
+  reject_count: number;
+  logs: string;
+  created_at: string | null;
+};
+
+type CandidateInsightsData = {
+  mode: "PAPER" | "LIVE";
+  trading_universe?: string;
+  primary_source: string;
+  source_counts: {
+    fundamental_coins_total: number;
+    assets_active_total: number;
+  };
+  total_candidates_raw: number;
+  total_candidates_visible: number;
+  why_limited_note?: string | null;
+  latest_scan?: CandidateScanSummary | null;
+  candidate_types: CandidateTypeSummary[];
+  capabilities: CandidateCapability[];
+  agents: CandidateAgent[];
+  scanner_logs: CandidateLog[];
+  candidates: CandidateInsightItem[];
+};
+
+type CandidateScanActionData = {
+  scan_run_id?: number | null;
+  status: string;
+  mode: "PAPER" | "LIVE";
+  actor: string;
+  started_at?: string;
+  finished_at?: string;
+  scanned_total: number;
+  qualified_total: number;
+  qualified_symbols: string[];
+  counts_by_type: Record<string, number>;
+  sources: Record<string, number>;
+  include_non_crypto: boolean;
+  deep_scan: boolean;
+  message: string;
+  error?: string;
+};
+
 type SignalData = {
   id: string;
   symbol: string;
@@ -199,6 +302,12 @@ function formatMoney(value: number): string {
 
 function formatPct(value: number): string {
   return `${value.toFixed(2)}%`;
+}
+
+function formatMarketType(value: string): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "OTHER";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function normalizeBotStatus(value: string | null | undefined): string {
@@ -601,6 +710,9 @@ function App() {
   const [controlBusy, setControlBusy] = useState<null | "start" | "pause" | "stop" | "mode">(null);
   const [controlError, setControlError] = useState<string | null>(null);
   const [controlMessage, setControlMessage] = useState<string | null>(null);
+  const [candidateScanBusy, setCandidateScanBusy] = useState(false);
+  const [candidateScanMessage, setCandidateScanMessage] = useState<string | null>(null);
+  const [candidateScanError, setCandidateScanError] = useState<string | null>(null);
 
   const isOverviewTab = activeTab === "overview";
   const isCandidatesTab = activeTab === "candidates";
@@ -621,6 +733,15 @@ function App() {
 
   const summaryFetcher = useCallback(() => apiGet<SummaryData>("/api/dashboard/summary", { mode: activeMode }), [activeMode]);
   const candidatesFetcher = useCallback(() => apiGet<CandidateData[]>("/api/candidates", { limit: 40 }), []);
+  const candidateInsightsFetcher = useCallback(
+    () =>
+      apiGet<CandidateInsightsData>("/api/candidates/insights", {
+        mode: activeMode,
+        limit: 120,
+        log_limit: 10,
+      }),
+    [activeMode],
+  );
   const signalsFetcher = useCallback(() => apiGet<SignalData[]>("/api/signals", { limit: 60, symbol }), [symbol]);
   const positionsFetcher = useCallback(
     () => apiGet<PositionData[]>("/api/positions", { limit: 60, symbol, session_id: sessionId }),
@@ -639,6 +760,7 @@ function App() {
 
   const summary = usePollingResource(summaryFetcher, POLL_INTERVALS.summary, true);
   const candidates = usePollingResource(candidatesFetcher, POLL_INTERVALS.candidates, isCandidatesTab);
+  const candidateInsights = usePollingResource(candidateInsightsFetcher, POLL_INTERVALS.candidates, isCandidatesTab);
   const signals = usePollingResource(signalsFetcher, POLL_INTERVALS.signals, isSignalsTab);
   const positions = usePollingResource(positionsFetcher, POLL_INTERVALS.positions, isPositionsTab);
   const orders = usePollingResource(ordersFetcher, POLL_INTERVALS.orders, isPositionsTab);
@@ -673,7 +795,10 @@ function App() {
       events.refresh();
       overviewTrades.refresh();
     }
-    if (isCandidatesTab) candidates.refresh();
+    if (isCandidatesTab) {
+      candidates.refresh();
+      candidateInsights.refresh();
+    }
     if (isSignalsTab) signals.refresh();
     if (isPositionsTab) {
       positions.refresh();
@@ -685,6 +810,7 @@ function App() {
     events,
     overviewTrades,
     candidates,
+    candidateInsights,
     signals,
     positions,
     orders,
@@ -747,10 +873,35 @@ function App() {
     }
   }, [activeMode, handleRefresh, modeDirty, pendingMode]);
 
+  const runCandidateScan = useCallback(async () => {
+    if (!window.confirm("Run Radar scan now? This will refresh candidate universe immediately.")) return;
+    setCandidateScanBusy(true);
+    setCandidateScanError(null);
+    setCandidateScanMessage(null);
+    try {
+      const payload = await apiPost<CandidateScanActionData>("/api/candidates/scan", {
+        mode: activeMode,
+        limit: 100,
+        include_non_crypto: true,
+        deep_scan: false,
+        actor: "dashboard",
+      });
+      setCandidateScanMessage(
+        `Scan ${payload.status}: ${payload.qualified_total} qualified from ${payload.scanned_total} scanned.`,
+      );
+      handleRefresh();
+    } catch (err) {
+      setCandidateScanError(toErrorMessage(err));
+    } finally {
+      setCandidateScanBusy(false);
+    }
+  }, [activeMode, handleRefresh]);
+
   const symbolOptions = useMemo(() => {
     const fromCandidates = (candidates.data || []).map((item) => item.symbol);
-    return Array.from(new Set([...DEFAULT_SYMBOLS, ...fromCandidates])).sort();
-  }, [candidates.data]);
+    const fromInsights = (candidateInsights.data?.candidates || []).map((item) => item.symbol);
+    return Array.from(new Set([...DEFAULT_SYMBOLS, ...fromCandidates, ...fromInsights])).sort();
+  }, [candidateInsights.data?.candidates, candidates.data]);
 
   const currentOpenTrade = useMemo(() => {
     return (overviewTrades.data || []).find((item) => item.is_open) || null;
@@ -764,6 +915,62 @@ function App() {
   const heartbeatAtLabel = formatDateTime(summary.data?.last_heartbeat_at || control.data?.last_heartbeat_at || null);
   const uptimeLabel = formatDuration(summary.data?.uptime_sec ?? control.data?.uptime_sec);
   const latestUpdateLabel = summary.lastUpdated ? new Date(summary.lastUpdated).toLocaleString() : "-";
+  const candidateCards = candidateInsights.data?.candidates || [];
+  const candidateTypeCards = candidateInsights.data?.candidate_types || [];
+  const candidateCapabilities = candidateInsights.data?.capabilities || [];
+  const candidateAgents = candidateInsights.data?.agents || [];
+  const scannerLogs = candidateInsights.data?.scanner_logs || [];
+  const scanSummary = candidateInsights.data?.latest_scan || null;
+  const sourceCounts = candidateInsights.data?.source_counts;
+  const candidateTypeMap = useMemo(() => {
+    const next = new Map<string, CandidateTypeSummary>();
+    for (const item of candidateTypeCards) {
+      next.set(String(item.market_type).toLowerCase(), item);
+    }
+    return next;
+  }, [candidateTypeCards]);
+
+  const candidateUniverseByType = useMemo(() => {
+    const orderedTypes = ["crypto", "stock", "gold", "silver"];
+    return orderedTypes.map((marketType) => ({
+      marketType,
+      rows: candidateCards.filter((row) => String(row.candidate_type).toLowerCase() === marketType),
+    }));
+  }, [candidateCards]);
+
+  const candidateScopeAgents = useMemo(
+    () => candidateAgents.filter((agent) => agent.candidate_scope).slice(0, 3),
+    [candidateAgents],
+  );
+
+  const candidateAgentActivity = useMemo(() => {
+    const defaultTerms: Record<string, string[]> = {
+      radar: ["radar", "scan", "harvest", "farm", "spy"],
+      headhunter: ["headhunter", "hunter", "fundamental", "candidate"],
+      pricespy: ["spy", "ticker", "fetching", "scan"],
+    };
+
+    return candidateScopeAgents.map((agent) => {
+      const terms = defaultTerms[agent.agent_id] || [agent.name.toLowerCase()];
+      const matchedLog =
+        scannerLogs.find((log) => {
+          const role = String(log.role || "").toLowerCase();
+          const message = String(log.message || "").toLowerCase();
+          return terms.some((term) => role.includes(term) || message.includes(term));
+        }) || null;
+
+      const matchedTs = matchedLog?.created_at ? new Date(matchedLog.created_at).getTime() : null;
+      const ageMin = matchedTs ? Math.max(0, Math.floor((Date.now() - matchedTs) / 60000)) : null;
+      const status = matchedLog ? (ageMin !== null && ageMin <= 30 ? "RUNNING" : "STANDBY") : "IDLE";
+
+      return {
+        ...agent,
+        status,
+        last_action_at: matchedLog?.created_at || null,
+        last_action_message: matchedLog?.message || "No activity log yet for this agent.",
+      };
+    });
+  }, [candidateScopeAgents, scannerLogs]);
 
   return (
     <div className="layout">
@@ -789,95 +996,119 @@ function App() {
         </div>
       </header>
 
-      <section className="command-grid">
-        <div className="command-card">
-          <div className="command-label">Trading Mode</div>
-          <div className={`mode-chip ${activeMode === "LIVE" ? "mode-live" : "mode-paper"}`}>{activeMode}</div>
-          <div className="command-subtle">
-            {activeMode === "LIVE" ? "Real orders enabled" : "Paper simulation only"}
+      {isOverviewTab ? (
+        <section className="command-grid">
+          <div className="command-card">
+            <div className="command-label">Trading Mode</div>
+            <div className={`mode-chip ${activeMode === "LIVE" ? "mode-live" : "mode-paper"}`}>{activeMode}</div>
+            <div className="command-subtle">
+              {activeMode === "LIVE" ? "Real orders enabled" : "Paper simulation only"}
+            </div>
           </div>
-        </div>
-        <div className="command-card">
-          <div className="status-headline">
-            <span className="command-label">Bot Status</span>
-            <button className="info-dot" title={botStatusTooltip} aria-label="bot status explanation">
-              ?
-            </button>
+          <div className="command-card">
+            <div className="status-headline">
+              <span className="command-label">Bot Status</span>
+              <button className="info-dot" title={botStatusTooltip} aria-label="bot status explanation">
+                ?
+              </button>
+            </div>
+            <strong className={`status-chip ${botStatusClass}`}>{botStatus}</strong>
+            <div className="status-reason">{botStatusReason}</div>
           </div>
-          <strong className={`status-chip ${botStatusClass}`}>{botStatus}</strong>
-          <div className="status-reason">{botStatusReason}</div>
-        </div>
-        <div className="command-card">
-          <div className="command-label">Trading Controls</div>
-          <div className="control-actions">
-            <button
-              className="control-btn start"
-              onClick={() => runControlAction("start")}
-              disabled={controlBusy !== null}
-            >
-              Start
-            </button>
-            <button
-              className="control-btn pause"
-              onClick={() => runControlAction("pause")}
-              disabled={controlBusy !== null}
-            >
-              Pause
-            </button>
-            <button
-              className="control-btn stop"
-              onClick={() => runControlAction("stop")}
-              disabled={controlBusy !== null}
-            >
-              Stop
-            </button>
-          </div>
-          <div className="mode-apply">
-            <label htmlFor="target-mode">Target mode</label>
-            <div className="mode-apply-row">
-              <select
-                id="target-mode"
-                value={pendingMode}
-                onChange={(event) => {
-                  const nextMode = event.target.value as "PAPER" | "LIVE";
-                  setPendingMode(nextMode);
-                  setModeDirty(nextMode !== activeMode);
-                }}
+          <div className="command-card">
+            <div className="command-label">Trading Controls</div>
+            <div className="control-actions">
+              <button
+                className="control-btn start"
+                onClick={() => runControlAction("start")}
                 disabled={controlBusy !== null}
               >
-                <option value="PAPER">PAPER</option>
-                <option value="LIVE">LIVE</option>
-              </select>
-              <button onClick={applyModeChange} disabled={controlBusy !== null || !modeDirty}>
-                Apply Mode
+                Start
+              </button>
+              <button
+                className="control-btn pause"
+                onClick={() => runControlAction("pause")}
+                disabled={controlBusy !== null}
+              >
+                Pause
+              </button>
+              <button
+                className="control-btn stop"
+                onClick={() => runControlAction("stop")}
+                disabled={controlBusy !== null}
+              >
+                Stop
+              </button>
+            </div>
+            <div className="mode-apply">
+              <label htmlFor="target-mode">Target mode</label>
+              <div className="mode-apply-row">
+                <select
+                  id="target-mode"
+                  value={pendingMode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as "PAPER" | "LIVE";
+                    setPendingMode(nextMode);
+                    setModeDirty(nextMode !== activeMode);
+                  }}
+                  disabled={controlBusy !== null}
+                >
+                  <option value="PAPER">PAPER</option>
+                  <option value="LIVE">LIVE</option>
+                </select>
+                <button onClick={applyModeChange} disabled={controlBusy !== null || !modeDirty}>
+                  Apply Mode
+                </button>
+              </div>
+            </div>
+            <div className="control-note">Mode changes require explicit confirmation.</div>
+          </div>
+        </section>
+      ) : (
+        <section className="mini-status-strip">
+          <div className="mini-status-item">
+            <span>Mode</span>
+            <strong className={`mode-chip ${activeMode === "LIVE" ? "mode-live" : "mode-paper"}`}>{activeMode}</strong>
+          </div>
+          <div className="mini-status-item">
+            <span>Bot Status</span>
+            <div className="mini-status-row">
+              <strong className={`status-chip ${botStatusClass}`}>{botStatus}</strong>
+              <button className="info-dot" title={botStatusTooltip} aria-label="bot status explanation">
+                ?
               </button>
             </div>
           </div>
-          <div className="control-note">Mode changes require explicit confirmation.</div>
-        </div>
-      </section>
+          <div className="mini-status-item">
+            <span>Latest update on:</span>
+            <strong>{latestUpdateLabel}</strong>
+          </div>
+        </section>
+      )}
 
       {controlError || control.error ? <div className="error-banner">{controlError || control.error}</div> : null}
       {controlMessage ? <div className="status-detail">{controlMessage}</div> : null}
 
-      <section className="meta-strip">
-        <div className="meta-item">
-          <span>Last heartbeat</span>
-          <strong>{heartbeatAtLabel}</strong>
-        </div>
-        <div className="meta-item">
-          <span>Heartbeat age</span>
-          <strong>{heartbeatAgeLabel}</strong>
-        </div>
-        <div className="meta-item">
-          <span>Uptime since last restart</span>
-          <strong>{uptimeLabel}</strong>
-        </div>
-        <div className="meta-item">
-          <span>Latest update on:</span>
-          <strong>{latestUpdateLabel}</strong>
-        </div>
-      </section>
+      {isOverviewTab ? (
+        <section className="meta-strip">
+          <div className="meta-item">
+            <span>Last heartbeat</span>
+            <strong>{heartbeatAtLabel}</strong>
+          </div>
+          <div className="meta-item">
+            <span>Heartbeat age</span>
+            <strong>{heartbeatAgeLabel}</strong>
+          </div>
+          <div className="meta-item">
+            <span>Uptime since last restart</span>
+            <strong>{uptimeLabel}</strong>
+          </div>
+          <div className="meta-item">
+            <span>Latest update on:</span>
+            <strong>{latestUpdateLabel}</strong>
+          </div>
+        </section>
+      ) : null}
 
       <section className="toolbar">
         <label>
@@ -1054,38 +1285,161 @@ function App() {
       ) : null}
 
       {isCandidatesTab ? (
-        <section className="content">
+        <section className="content candidate-content">
+          {candidateInsights.error ? <div className="error-banner">{candidateInsights.error}</div> : null}
+          {candidateScanError ? <div className="error-banner">{candidateScanError}</div> : null}
+          {candidateInsights.data?.why_limited_note ? (
+            <div className="status-detail">Why only few candidates now: {candidateInsights.data.why_limited_note}</div>
+          ) : null}
+          {candidateScanMessage ? <div className="status-detail">{candidateScanMessage}</div> : null}
+
+          <div className="candidate-actions">
+            <button className="scan-force-btn" onClick={runCandidateScan} disabled={candidateScanBusy}>
+              {candidateScanBusy ? "Running Radar..." : "Run Radar Scan (Force)"}
+            </button>
+            <span className="candidate-actions-note">
+              Force refresh candidate universe now (crypto top-volume + stock + gold + silver).
+            </span>
+          </div>
+
+          <div className="candidate-summary-grid candidate-focus-grid">
+            <article className="candidate-summary-card">
+              <div className="candidate-summary-label">Visible Candidates ({activeMode})</div>
+              <div className="candidate-summary-value">{candidateInsights.data?.total_candidates_visible ?? "-"}</div>
+              <div className="candidate-summary-help">
+                PAPER shows crypto/stock/gold/silver even without live connector. LIVE is filtered by tradable connectors.
+              </div>
+            </article>
+            <article className="candidate-summary-card">
+              <div className="candidate-summary-label">Primary Source</div>
+              <div className="candidate-summary-value">{candidateInsights.data?.primary_source || "-"}</div>
+              <div className="candidate-summary-help">
+                Use `Run Radar Scan` for immediate refresh, or extend source pipeline in `src/api/candidates.py`.
+              </div>
+            </article>
+            <article className="candidate-summary-card">
+              <div className="candidate-summary-label">Universe Mode</div>
+              <div className="candidate-summary-value">{candidateInsights.data?.trading_universe || "-"}</div>
+              <div className="candidate-summary-help">Defines how whitelist and rank cap are applied in screener stage.</div>
+            </article>
+            <article className="candidate-summary-card">
+              <div className="candidate-summary-label">Fundamental Universe</div>
+              <div className="candidate-summary-value">{sourceCounts?.fundamental_coins_total ?? "-"}</div>
+              <div className="candidate-summary-help">Count from `fundamental_coins` table.</div>
+            </article>
+            <article className="candidate-summary-card">
+              <div className="candidate-summary-label">Assets Active</div>
+              <div className="candidate-summary-value">{sourceCounts?.assets_active_total ?? "-"}</div>
+              <div className="candidate-summary-help">Count from `assets` where `status = active`.</div>
+            </article>
+          </div>
+
           <div className="panel">
             <div className="panel-head">
-              <h3>Candidate Scan</h3>
-              {candidates.syncing ? <span className="subtle-status">syncing...</span> : null}
+              <h3>Candidate Agent Activity</h3>
+              {candidateInsights.syncing || candidates.syncing ? <span className="subtle-status">syncing...</span> : null}
             </div>
-            {candidates.error ? <div className="error-banner">{candidates.error}</div> : null}
-            <div className="table-wrap">
+            <div className="agent-grid">
+              {candidateAgentActivity.map((agent) => (
+                <article key={agent.agent_id} className="agent-card candidate-scope">
+                  <div className="agent-head">
+                    <strong>{agent.name}</strong>
+                    <span className={`agent-status ${agent.status.toLowerCase()}`}>{agent.status}</span>
+                  </div>
+                  <div className="agent-line">
+                    <span>Engine/Model:</span> {agent.model_or_engine}
+                  </div>
+                  <div className="agent-line">
+                    <span>Functions:</span> {agent.functions.join(", ")}
+                  </div>
+                  <div className="agent-line">
+                    <span>Last action:</span> {formatDateTime(agent.last_action_at)}
+                  </div>
+                  <div className="agent-help">{agent.last_action_message}</div>
+                </article>
+              ))}
+              {candidateAgentActivity.length === 0 && !candidateInsights.loading ? (
+                <div className="subtle-status">No candidate agent activity yet.</div>
+              ) : null}
+            </div>
+          </div>
+
+          <section className="candidate-universe-grid">
+            {candidateUniverseByType.map(({ marketType, rows }) => {
+              const typeMeta = candidateTypeMap.get(marketType);
+              return (
+                <div className="panel candidate-type-panel" key={marketType}>
+                  <div className="panel-head">
+                    <h3>{formatMarketType(marketType)}</h3>
+                    <span className="subtle-status">
+                      {rows.length} rows{typeMeta ? ` | live ${typeMeta.live_tradable}` : ""}
+                    </span>
+                  </div>
+                  <div className="table-wrap candidate-type-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Rank</th>
+                          <th>Symbol</th>
+                          <th>Liquidity</th>
+                          <th>Whitelist</th>
+                          <th>Tradable</th>
+                          <th>Live</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((item) => (
+                          <tr key={`${marketType}-${item.symbol}`}>
+                            <td>{item.screener_rank}</td>
+                            <td title={item.scanner_reason}>{item.symbol}</td>
+                            <td>{item.liquidity_score.toFixed(1)}</td>
+                            <td>{item.whitelist_pass ? "PASS" : item.whitelist_state}</td>
+                            <td>{item.tradable ? "YES" : "NO"}</td>
+                            <td>{item.live_tradable ? "YES" : "NO"}</td>
+                          </tr>
+                        ))}
+                        {rows.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="empty-row">
+                              No {formatMarketType(marketType)} candidates.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+
+          <div className="panel candidate-logs-panel">
+            <div className="panel-head">
+              <h3>Scanner Logs (latest 10)</h3>
+            </div>
+            <div className="table-wrap candidate-log-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Rank</th>
-                    <th>Symbol</th>
-                    <th>Liquidity</th>
-                    <th>Tradable</th>
-                    <th>Reject Reason</th>
+                    <th>Time</th>
+                    <th>Level</th>
+                    <th>Role</th>
+                    <th>Message</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(candidates.data || []).map((item) => (
-                    <tr key={item.symbol}>
-                      <td>{item.screener_rank}</td>
-                      <td>{item.symbol}</td>
-                      <td>{item.liquidity_score.toFixed(1)}</td>
-                      <td>{item.tradable ? "YES" : "NO"}</td>
-                      <td>{item.reject_reason || "-"}</td>
+                  {scannerLogs.slice(0, 10).map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDateTime(item.created_at)}</td>
+                      <td>{item.level}</td>
+                      <td>{item.role}</td>
+                      <td>{item.message}</td>
                     </tr>
                   ))}
-                  {(candidates.data || []).length === 0 && !candidates.loading ? (
+                  {scannerLogs.length === 0 && !candidateInsights.loading ? (
                     <tr>
-                      <td colSpan={5} className="empty-row">
-                        No candidates available. Run a scan or wait for next farm cycle.
+                      <td colSpan={4} className="empty-row">
+                        No scanner logs yet.
                       </td>
                     </tr>
                   ) : null}
@@ -1093,6 +1447,94 @@ function App() {
               </table>
             </div>
           </div>
+
+          <section className="content two-panels candidate-reference-grid">
+            <div className="panel">
+              <div className="panel-head">
+                <h3>Broker/API Capability Matrix (Reference)</h3>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Paper</th>
+                      <th>Live</th>
+                      <th>API</th>
+                      <th>Connected</th>
+                      <th>Ready</th>
+                      <th>Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidateCapabilities.map((item) => (
+                      <tr key={item.market_type}>
+                        <td>{formatMarketType(item.market_type)}</td>
+                        <td>{item.paper_enabled ? "YES" : "NO"}</td>
+                        <td>{item.live_enabled ? "YES" : "NO"}</td>
+                        <td>{item.api_name}</td>
+                        <td>{item.connected ? "YES" : "NO"}</td>
+                        <td>{item.ready ? "YES" : "NO"}</td>
+                        <td>{item.detail}</td>
+                      </tr>
+                    ))}
+                    {candidateCapabilities.length === 0 && !candidateInsights.loading ? (
+                      <tr>
+                        <td colSpan={7} className="empty-row">
+                          No capability records.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-head">
+                <h3>Latest Scan Summary (Reference)</h3>
+                {candidateInsights.syncing ? <span className="subtle-status">syncing...</span> : null}
+              </div>
+              {scanSummary ? (
+                <div className="scan-summary-grid">
+                  <div>
+                    <div className="scan-label">Scan run</div>
+                    <div className="scan-value mono">{scanSummary.scan_run_id}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Status</div>
+                    <div className="scan-value">{scanSummary.status}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Started</div>
+                    <div className="scan-value">{formatDateTime(scanSummary.start_time)}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Finished</div>
+                    <div className="scan-value">{formatDateTime(scanSummary.end_time)}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Universe size</div>
+                    <div className="scan-value">{scanSummary.universe_size}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Passed</div>
+                    <div className="scan-value good">{scanSummary.passed_count}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Rejected</div>
+                    <div className="scan-value bad">{scanSummary.reject_count}</div>
+                  </div>
+                  <div>
+                    <div className="scan-label">Log Summary</div>
+                    <div className="scan-value">{scanSummary.logs || "-"}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="subtle-status">No scan run snapshot available yet.</div>
+              )}
+            </div>
+          </section>
         </section>
       ) : null}
 

@@ -248,30 +248,53 @@ def render_config_page(db):
         st.subheader("🕵️ Head Hunter Settings")
         
         # A. Trading Universe
-        current_universe = str(get_cfg(db, "TRADING_UNIVERSE", "ALL")).replace('"', '')
+        current_universe = str(get_cfg(db, "TRADING_UNIVERSE", "TOP_100")).replace('"', '')
         new_universe = st.selectbox(
             "Trading Universe Mode",
-            ["ALL", "SAFE_LIST", "TOP_30"],
-            index=["ALL", "SAFE_LIST", "TOP_30"].index(current_universe) if current_universe in ["ALL", "SAFE_LIST", "TOP_30"] else 0,
-            help="SAFE_LIST: Only trade symbols in your Whitelist. ALL: Trade anything passing filters."
+            ["TOP_100", "ALL", "SAFE_LIST", "TOP_30"],
+            index=["TOP_100", "ALL", "SAFE_LIST", "TOP_30"].index(current_universe) if current_universe in ["TOP_100", "ALL", "SAFE_LIST", "TOP_30"] else 0,
+            help="TOP_100: Keep top volume 100 assets. SAFE_LIST: Only whitelist. ALL: all assets passing filters."
+        )
+
+        current_whitelist_policy = str(get_cfg(db, "WHITELIST_POLICY", "RELAXED")).replace('"', '')
+        new_whitelist_policy = st.selectbox(
+            "Whitelist Policy",
+            ["RELAXED", "IGNORE", "STRICT"],
+            index=["RELAXED", "IGNORE", "STRICT"].index(current_whitelist_policy) if current_whitelist_policy in ["RELAXED", "IGNORE", "STRICT"] else 0,
+            help="RELAXED: whitelist gets lower volume threshold. IGNORE: no whitelist gate. STRICT: whitelist only.",
         )
         
         # B. Min Volume
         try:
-            current_vol = float(str(get_cfg(db, "MIN_VOLUME", 10000000)))
+            current_vol = float(str(get_cfg(db, "MIN_VOLUME", 10000)))
         except:
-            current_vol = 10000000.0
+            current_vol = 10000.0
         new_vol = st.number_input(
             "Min 24h Volume (USDT)",
             min_value=0.0,
             value=current_vol,
-            step=1000000.0,
+            step=1000.0,
             format="%f"
+        )
+
+        try:
+            current_radar_limit = int(float(str(get_cfg(db, "RADAR_SCAN_LIMIT", 100))))
+        except:
+            current_radar_limit = 100
+        new_radar_limit = st.number_input(
+            "Radar Scan Limit",
+            min_value=20,
+            max_value=300,
+            value=current_radar_limit,
+            step=5,
+            help="Max symbols requested from Radar in each farming/manual scan."
         )
         
         if st.button("Save Fundamental Config"):
             db.table("bot_config").upsert({"key": "TRADING_UNIVERSE", "value": new_universe}).execute()
+            db.table("bot_config").upsert({"key": "WHITELIST_POLICY", "value": new_whitelist_policy}).execute()
             db.table("bot_config").upsert({"key": "MIN_VOLUME", "value": str(new_vol)}).execute()
+            db.table("bot_config").upsert({"key": "RADAR_SCAN_LIMIT", "value": str(new_radar_limit)}).execute()
             st.success("Saved!")
             st.rerun()
 

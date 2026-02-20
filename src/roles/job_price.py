@@ -26,6 +26,11 @@ class PriceSpy:
         self.api_key = os.environ.get("BINANCE_API_KEY")
         self.secret = os.environ.get("BINANCE_SECRET")
         self.api_url = os.environ.get("BINANCE_API_URL", "https://api.binance.com")
+        self.scan_exchange_id = os.environ.get("RADAR_SCAN_EXCHANGE_ID", "bybit").strip().lower() or "bybit"
+        self.scan_quote = os.environ.get("RADAR_SCAN_QUOTE", "USDT").strip().upper() or "USDT"
+        self.scan_force_global = (
+            os.environ.get("RADAR_SCAN_FORCE_GLOBAL", "true").strip().lower() in {"1", "true", "yes"}
+        )
         
         # Circuit breaker for CCXT API protection
         self.ccxt_breaker = CircuitBreaker(
@@ -154,6 +159,81 @@ class PriceSpy:
             # Return cached or empty dict
             return cached or {}
 
+    def _extract_volume(self, ticker: dict) -> float:
+        try:
+            if ticker.get('quoteVolume'):
+                return float(ticker['quoteVolume'])
+            if ticker.get('baseVolume') and ticker.get('last'):
+                return float(ticker['baseVolume']) * float(ticker['last'])
+        except Exception:
+            return 0.0
+        return 0.0
+
+    def _normalize_spot_symbol(self, raw_symbol: str) -> str:
+        symbol = str(raw_symbol or "").upper()
+        if ":" in symbol and "/" in symbol:
+            # Bybit/OKX swap symbols can be `BTC/USDT:USDT`; keep spot style only.
+            symbol = symbol.split(":", 1)[0]
+        return symbol
+
+    def _scan_from_global_exchange(self, limit=100, callback=None, logger=None):
+        exchange_id = self.scan_exchange_id
+        try:
+            exchange_cls = getattr(ccxt, exchange_id)
+        except AttributeError:
+            if logger:
+                logger("Radar", f"Unknown RADAR_SCAN_EXCHANGE_ID={exchange_id}. Fallback to local exchange scan.", "WARNING")
+            return []
+
+        try:
+            if callback:
+                callback(f"Radar: Global scan via {exchange_id} ({self.scan_quote} spot)...")
+            scan_exchange = exchange_cls({
+                'enableRateLimit': True,
+                'timeout': 15000,
+                'options': {'defaultType': 'spot'},
+            })
+            scan_exchange.load_markets()
+            tickers = scan_exchange.fetch_tickers()
+
+            valid_pairs = []
+            for raw_symbol, ticker in (tickers or {}).items():
+                market = (scan_exchange.markets or {}).get(raw_symbol) or {}
+                if not market.get('active', True):
+                    continue
+                if not market.get('spot', False):
+                    continue
+                quote = str(market.get('quote', '')).upper()
+                if quote != self.scan_quote:
+                    continue
+                normalized_symbol = self._normalize_spot_symbol(raw_symbol)
+                if not normalized_symbol.endswith(f"/{self.scan_quote}"):
+                    continue
+                vol = self._extract_volume(ticker or {})
+                if vol <= 0:
+                    continue
+                valid_pairs.append({'symbol': normalized_symbol, 'volume': vol})
+
+            # Deduplicate and keep highest observed volume per symbol.
+            dedup_map = {}
+            for row in valid_pairs:
+                prev = dedup_map.get(row['symbol'])
+                if not prev or row['volume'] > prev['volume']:
+                    dedup_map[row['symbol']] = row
+            output = list(dedup_map.values())
+            output.sort(key=lambda x: x['volume'], reverse=True)
+
+            if logger:
+                logger("Radar", f"Global scan via {exchange_id}: {len(output)} candidates.", "INFO")
+            if callback:
+                callback(f"Radar: {exchange_id} returned {len(output)} candidates.")
+            return output[: max(1, int(limit))]
+        except Exception as e:
+            if logger:
+                logger("Radar", f"Global scan failed on {exchange_id}: {e}", "WARNING")
+            print(f"Spy: Global scan failed ({exchange_id}): {e}")
+            return []
+
 
     def load_markets_custom(self):
         """Lazy load markets specifically for Binance TH if needed"""
@@ -236,122 +316,72 @@ class PriceSpy:
              print(f"Spy (Balance) Error: {e}")
              return None
 
-    def get_top_symbols(self, limit=30, callback=None, logger=None):
-        """Fetches top USDT pairs by 24h Volume"""
+    def get_top_symbols(self, limit=100, callback=None, logger=None):
+        """Fetches top quote-volume spot pairs (default: global scan for wider universe)."""
         try:
+            limit = max(10, int(limit))
+        except Exception:
+            limit = 100
+
+        try:
+            # For BINANCE_TH live mode, use global public exchange for radar by default to avoid slow TH loop scans.
+            if self.scan_force_global or "binance.th" in self.api_url or "api.binance.th" in self.api_url:
+                global_rows = self._scan_from_global_exchange(limit=limit, callback=callback, logger=logger)
+                if global_rows:
+                    if callback:
+                        callback(f"Radar: Found {len(global_rows)} candidates from global source.")
+                    return global_rows
+
             if not self.exchange.markets:
                 self.load_markets_custom()
-            
-            all_symbols = [s for s in self.exchange.symbols if '/USDT' in s]
-            
-            # Logic: If limit is small (Scanner Mode), use hardcoded 'Safe List' for speed
-            # If limit is large (Farming Mode), scan EVERYTHING.
-            if limit < 20: 
-                 # Fallback/Speed list
-                 target_list = [
-                    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
-                    "DOGE/USDT", "ADA/USDT", "LINK/USDT", "DOT/USDT", "POL/USDT"
-                 ]
-            else:
-                 # FULL SCAN
-                 target_list = all_symbols
-                 if callback: callback(f"Radar: Reading entire market ({len(target_list)} pairs)...")
-            
+            all_symbols = [s for s in (self.exchange.symbols or []) if f"/{self.scan_quote}" in s]
+            target_list = all_symbols[: max(limit * 2, 120)]
+
             valid_pairs = []
+            if callback:
+                callback(f"Radar: Local exchange scan ({len(target_list)} pairs)...")
 
-            # Batch Fetch for Speed & Reliability
-            print(f"Spy: Scanning {len(target_list)} candidates...")
-            if callback: callback(f"Radar: Bulk scanning {len(target_list)} pairs...")
-
-            # Binance TH doesn't support batch ticker fetch (requires symbol parameter)
-            # Skip batch fetch and go straight to individual requests
             if "binance.th" in self.api_url or "api.binance.th" in self.api_url:
-                print(f"Spy: Binance TH detected - using individual ticker requests...")
-                if logger: logger("Spy", f"Binance TH: Fetching {len(target_list)} tickers individually (no batch endpoint).", "INFO")
-                
+                if logger:
+                    logger("Spy", f"Binance TH fallback scan: {len(target_list)} symbols.", "INFO")
                 total = len(target_list)
                 for idx, symbol in enumerate(target_list, 1):
                     try:
                         ticker = self.exchange.fetch_ticker(symbol)
-                        vol = 0
-                        if 'quoteVolume' in ticker and ticker['quoteVolume']:
-                            vol = float(ticker['quoteVolume'])
-                        elif 'baseVolume' in ticker and 'last' in ticker:
-                            vol = float(ticker['baseVolume']) * float(ticker['last'])
-                        
-                        if vol > 0: 
+                        vol = self._extract_volume(ticker or {})
+                        if vol > 0:
                             valid_pairs.append({'symbol': symbol, 'volume': vol})
-                        
-                        # Show progress every 20 symbols or at completion
-                        if idx % 20 == 0 or idx == total:
-                            progress_pct = (idx * 100) // total
-                            progress_msg = f"Radar: Fetching tickers {idx}/{total} ({progress_pct}%)..."
-                            print(f"Spy: Progress: {idx}/{total} ({progress_pct}%)")
-                            if callback: callback(progress_msg)
-                            
-                    except Exception as loop_e:
-                        pass # Silent skip to avoid log spam
-                    time.sleep(0.15)  # Rate limit: ~6 requests/sec to avoid Binance TH throttle
-
-                print(f"Spy: Successfully fetched {len(valid_pairs)} valid pairs individually.")
+                        if idx % 25 == 0 or idx == total:
+                            progress_pct = (idx * 100) // max(1, total)
+                            if callback:
+                                callback(f"Radar: TH fallback {idx}/{total} ({progress_pct}%)")
+                    except Exception:
+                        pass
+                    time.sleep(0.10)
             else:
-                # Binance Global or other exchanges: Try batch fetch via CCXT
                 try:
-                    print(f"Spy: Fetching all market tickers via CCXT...")
                     all_tickers = self._fetch_tickers_protected()
-                    
-                    # Filter only symbols in our target_list
                     for symbol in target_list:
-                        if symbol in all_tickers:
-                            ticker = all_tickers[symbol]
-                            try:
-                                vol = 0
-                                if 'quoteVolume' in ticker and ticker['quoteVolume']:
-                                    vol = float(ticker['quoteVolume'])
-                                elif 'baseVolume' in ticker and 'last' in ticker:
-                                    vol = float(ticker['baseVolume']) * float(ticker['last'])
-                                
-                                if vol > 0:
-                                    valid_pairs.append({'symbol': symbol, 'volume': vol})
-                            except Exception as e:
-                                print(f"Spy: Ticker parse error for {symbol}: {e}")
-                    
-                    print(f"Spy: Successfully processed {len(valid_pairs)} valid pairs from batch fetch.")
-                            
+                        ticker = all_tickers.get(symbol) if isinstance(all_tickers, dict) else None
+                        if not ticker:
+                            continue
+                        vol = self._extract_volume(ticker)
+                        if vol > 0:
+                            valid_pairs.append({'symbol': symbol, 'volume': vol})
                 except Exception as e:
-                    # Fallback to loop if batch fetch completely fails
-                    if logger: logger("Spy", f"Batch Fetch Failed: {e}. Switching to Loop for {len(target_list)} items.", "WARNING")
-                    print(f"Spy: Batch fetch failed, falling back to individual requests...")
-                    
-                    for symbol in target_list:
-                        try:
-                            ticker = self._fetch_ticker_protected(symbol)
-                            vol = 0
-                            if 'quoteVolume' in ticker and ticker['quoteVolume']:
-                                vol = float(ticker['quoteVolume'])
-                            elif 'baseVolume' in ticker and 'last' in ticker:
-                                vol = float(ticker['baseVolume']) * float(ticker['last'])
-                            
-                            if vol > 0: 
-                                valid_pairs.append({'symbol': symbol, 'volume': vol})
-                        except Exception as loop_e:
-                            pass # Silent skip in fallback loop to avoid log spam
-                        time.sleep(0.15)  # Rate limit for fallback loop
+                    if logger:
+                        logger("Spy", f"Local batch scan failed: {e}", "WARNING")
 
-            # Sort by Volume Descending
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
-            
             if valid_pairs:
-                if callback: callback(f"Radar: Found {len(valid_pairs)} valid candidates.")
-                print(f"Spy: Found {len(valid_pairs)} valid candidates.")
-                return valid_pairs
-            
-            # Ultimate Fallback
-            return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
+                if callback:
+                    callback(f"Radar: Found {len(valid_pairs)} local candidates.")
+                return valid_pairs[:limit]
 
+            return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
         except Exception as e:
             print(f"Spy Top Assets Error: {e}")
-            return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}] # Fallback
+            return [{'symbol': "BTC/USDT", 'volume': 0}, {'symbol': "ETH/USDT", 'volume': 0}]
 
     def calculate_indicators(self, df: pd.DataFrame):
         """

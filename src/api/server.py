@@ -31,6 +31,10 @@ from src.contracts.error_codes import ErrorCode, build_api_error
 from src.database import get_db
 from src.ops.cutover import CutoverService
 from src.ops.hardening import HardeningService, compare_dashboard_summary
+from src.api.candidates import (
+    compute_candidate_insights,
+    run_manual_candidate_scan,
+)
 from src.roles.job_analysis import Strategist
 from src.roles.job_price import PriceSpy
 from src.telemetry.tracker import TelemetryTracker
@@ -1128,6 +1132,65 @@ def create_app() -> FastAPI:
 
         candidates = _compute_candidates(db, limit=limit)
         return _json_success(data=[row.model_dump() for row in candidates], request_id=_request_id_from(request))
+
+    @app.get("/api/candidates/insights")
+    async def get_candidate_insights(
+        request: Request,
+        mode: Optional[str] = Query(default=None, description="PAPER|LIVE"),
+        limit: int = Query(default=80, ge=1, le=500),
+        log_limit: int = Query(default=30, ge=5, le=200),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        resolved_mode = _resolve_mode(db, mode)
+        payload = compute_candidate_insights(db, mode=resolved_mode, limit=limit, log_limit=log_limit)
+        return _json_success(data=payload, request_id=_request_id_from(request))
+
+    @app.post("/api/candidates/scan")
+    async def post_candidate_scan(
+        request: Request,
+        mode: Optional[str] = Query(default=None, description="PAPER|LIVE"),
+        limit: int = Query(default=100, ge=5, le=200),
+        include_non_crypto: bool = Query(default=True),
+        deep_scan: bool = Query(default=False),
+        actor: str = Query(default="dashboard", min_length=2, max_length=40),
+    ):
+        db = get_db()
+        if not db:
+            raise APIRequestError(
+                code=ErrorCode.E_DB_500,
+                message="database is not configured",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        resolved_mode = _resolve_mode(db, mode)
+        try:
+            spy = _get_price_spy()
+            payload = await asyncio.to_thread(
+                run_manual_candidate_scan,
+                db,
+                spy,
+                resolved_mode,
+                limit,
+                include_non_crypto,
+                deep_scan,
+                actor,
+            )
+        except Exception as exc:
+            raise APIRequestError(
+                code=ErrorCode.E_UPSTREAM_EXCHANGE_502,
+                message="manual candidate scan failed",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                details={"reason": str(exc)[:300]},
+            )
+
+        return _json_success(data=payload, request_id=_request_id_from(request))
 
     @app.get("/api/signals")
     async def get_signals(

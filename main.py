@@ -550,7 +550,10 @@ def run_farming_cycle():
     except Exception as e:
         print(f"Farming history insert error: {e}")
     
-    candidates_raw = radar.scan_market(callback=update_status_db, logger=log_activity)
+    radar_limit = int(float(get_config_value("RADAR_SCAN_LIMIT", 100) or 100))
+    radar_limit = max(20, min(radar_limit, 200))
+    log_activity("Radar", f"Using radar scan limit={radar_limit}", "INFO")
+    candidates_raw = radar.scan_market(limit=radar_limit, callback=update_status_db, logger=log_activity)
 
     set_heartbeat()
 

@@ -5,7 +5,7 @@ Tests cover:
 - Volume filtering (MIN_VOLUME)
 - Blacklist rejection
 - Whitelist-only mode (TRADING_UNIVERSE = "SAFE_LIST")
-- Universe modes (ALL, SAFE_LIST, TOP_30)
+- Universe modes (ALL, SAFE_LIST, TOP_30, TOP_100)
 - Empty candidates handling
 - Database fallback scenarios
 """
@@ -27,7 +27,7 @@ class TestHeadHunterVolumeFiltering:
         candidates = [
             {'symbol': 'BTC/USDT', 'volume': 100000000},  # Above threshold
             {'symbol': 'ETH/USDT', 'volume': 60000000},   # Above threshold
-            {'symbol': 'SHIB/USDT', 'volume': 30000},     # Below threshold (50k)
+            {'symbol': 'SHIB/USDT', 'volume': 3000},      # Below threshold (10k)
             {'symbol': 'DOGE/USDT', 'volume': 70000000},  # Above threshold
         ]
         
@@ -101,6 +101,7 @@ class TestHeadHunterBlacklistWhitelist:
         hunter = HeadHunter(mock_db)
         hunter.universe = 'SAFE_LIST'
         hunter.min_volume = 50000
+        hunter.load_config = Mock()
         
         # Mock DB
         def mock_execute():
@@ -208,7 +209,7 @@ class TestHeadHunterConfigReload:
         hunter.load_config()
         
         # Assert
-        assert hunter.min_volume == 50000.0
+        assert hunter.min_volume == 10000.0
     
     def test_loads_universe_mode_from_config(self, mock_db_with_config):
         """HeadHunter should load TRADING_UNIVERSE from DB config"""
@@ -230,5 +231,46 @@ class TestHeadHunterConfigReload:
         hunter.load_config()
         
         # Assert - Should keep default values
-        assert hunter.min_volume == 50000
-        assert hunter.universe == 'ALL'
+        assert hunter.min_volume == 10000
+        assert hunter.universe == 'TOP_100'
+
+
+@pytest.mark.unit
+class TestHeadHunterUniversePolicies:
+    def test_top_100_universe_caps_candidate_count(self):
+        hunter = HeadHunter(db_client=None)
+        hunter.universe = "TOP_100"
+        hunter.min_volume = 0
+        hunter.whitelist_policy = "IGNORE"
+        hunter.load_config = Mock()
+        hunter._fetch_fundamental_status = Mock(return_value={})
+
+        candidates = [{"symbol": f"COIN{i}/USDT", "volume": float(1000 - i)} for i in range(160)]
+        qualified = hunter.screen_market(candidates)
+
+        assert len(qualified) == 100
+        assert qualified[0]["symbol"] == "COIN0/USDT"
+        assert qualified[-1]["symbol"] == "COIN99/USDT"
+
+    def test_relaxed_whitelist_can_pass_lower_volume_than_neutral(self):
+        hunter = HeadHunter(db_client=None)
+        hunter.universe = "ALL"
+        hunter.min_volume = 10000
+        hunter.whitelist_policy = "RELAXED"
+        hunter.load_config = Mock()
+        hunter._fetch_fundamental_status = Mock(
+            return_value={
+                "AAA/USDT": "WHITELIST",
+                "BBB/USDT": "NEUTRAL",
+            }
+        )
+
+        candidates = [
+            {"symbol": "AAA/USDT", "volume": 6000},
+            {"symbol": "BBB/USDT", "volume": 6000},
+        ]
+        qualified = hunter.screen_market(candidates)
+        symbols = [row["symbol"] for row in qualified]
+
+        assert "AAA/USDT" in symbols
+        assert "BBB/USDT" not in symbols
