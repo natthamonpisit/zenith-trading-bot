@@ -71,6 +71,19 @@
 - DoD:
   - query/order-plan replay ได้ และ test ผ่าน
 
+### 7) Dashboard Config for Phase 2
+- [x] เพิ่ม controls สำหรับ ORDER_PLAN/TP ladder/breakeven ในหน้า Strategy Config
+- [x] ผูกค่ากับ save flow เดิมใน `bot_config`
+- DoD:
+  - ปรับพารามิเตอร์ Phase 2 ได้จาก UI โดยไม่แก้โค้ด
+
+### 8) Order Plan Monitor Page
+- [x] เพิ่มหน้า dashboard สำหรับ monitor `order_plans`
+- [x] แสดง filters + metrics + linked open positions
+- [x] เพิ่ม route + sidebar navigation
+- DoD:
+  - operator เห็น lifecycle ของ plan/position ได้จาก dashboard
+
 ---
 
 ## Status
@@ -81,3 +94,5 @@
 - [x] Step 4 done: Executor Integration
 - [x] Step 5 done: TP Ladder + Breakeven Monitor
 - [x] Step 6 done: Replay/API + Tests
+- [x] Step 7 done: Dashboard Config for Phase 2
+- [x] Step 8 done: Order Plan Monitor Page

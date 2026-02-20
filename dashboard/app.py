@@ -23,6 +23,7 @@ from dashboard.ui.analysis_page import render_analysis_page
 from dashboard.ui.fundamental_page import render_fundamental_page
 from dashboard.ui.session_history_page import render_session_history_page
 from dashboard.ui.capital_page import render_capital_page
+from dashboard.ui.order_plan_page import render_order_plan_page
 
 # --- CONFIG ---
 st.set_page_config(page_title="Zenith AI Bot", layout="wide", page_icon="🤖")
@@ -65,6 +66,8 @@ elif st.session_state.page == 'Capital Management':
     render_capital_page(db)
 elif st.session_state.page == 'Strategy Config':
     render_config_page(db)
+elif st.session_state.page == 'Order Plans':
+    render_order_plan_page(db)
 elif st.session_state.page == 'Fundamental Lab':
     render_fundamental_page(db)
 elif st.session_state.page == 'Trade History':

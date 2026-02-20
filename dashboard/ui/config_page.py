@@ -244,6 +244,118 @@ def render_config_page(db):
                 atr_mult = 2.0
             new_atr_mult = st.number_input("ATR Multiplier", 1.0, 5.0, atr_mult, step=0.5, help="Trail distance = ATR × Multiplier. Higher = wider stop, lower = tighter stop.", disabled=not new_use_atr)
 
+        st.markdown("#### 🎯 Phase 2: Order Plan & TP Ladder")
+        st.caption("Deterministic plan before execution: Initial SL, TP1 partial, TP2 full exit, and breakeven promotion.")
+
+        op1, op2, op3 = st.columns(3)
+        with op1:
+            order_plan_enabled = str(get_cfg(db, "ORDER_PLAN_ENABLED", "true")).replace('"', '').lower() == 'true'
+            new_order_plan_enabled = st.checkbox(
+                "Enable Order Plan",
+                value=order_plan_enabled,
+                help="Build and persist deterministic order plan before BUY execution."
+            )
+        with op2:
+            tp_ladder_enabled = str(get_cfg(db, "ENABLE_TP_LADDER", "true")).replace('"', '').lower() == 'true'
+            new_tp_ladder_enabled = st.checkbox(
+                "Enable TP Ladder",
+                value=tp_ladder_enabled,
+                help="Activate TP1 partial + TP2 full exit monitor for open positions."
+            )
+        with op3:
+            current_plan_trailing_mode = str(get_cfg(db, "ORDER_PLAN_TRAILING_MODE", "ATR")).replace('"', '').upper()
+            if current_plan_trailing_mode not in ["ATR", "PERCENT", "NONE"]:
+                current_plan_trailing_mode = "ATR"
+            new_plan_trailing_mode = st.selectbox(
+                "Plan Trailing Mode",
+                ["ATR", "PERCENT", "NONE"],
+                index=["ATR", "PERCENT", "NONE"].index(current_plan_trailing_mode),
+                help="Preferred trailing mode for planned positions."
+            )
+
+        op_adv1, op_adv2, op_adv3 = st.columns(3)
+        with op_adv1:
+            try:
+                sl_atr_mult = float(str(get_cfg(db, "STOP_LOSS_ATR_MULTIPLIER", 1.8)))
+            except:
+                sl_atr_mult = 1.8
+            new_sl_atr_mult = st.number_input(
+                "Initial SL ATR Multiplier",
+                min_value=0.5,
+                max_value=10.0,
+                value=sl_atr_mult,
+                step=0.1,
+                help="Initial stop-loss distance = ATR × this multiplier."
+            )
+            try:
+                min_sl_pct = float(str(get_cfg(db, "MIN_STOP_LOSS_PCT", 0.8)))
+            except:
+                min_sl_pct = 0.8
+            new_min_sl_pct = st.number_input(
+                "Min Stop Loss (%)",
+                min_value=0.1,
+                max_value=10.0,
+                value=min_sl_pct,
+                step=0.1,
+                help="Minimum stop-loss distance from entry price."
+            )
+        with op_adv2:
+            try:
+                tp1_r = float(str(get_cfg(db, "TP1_R_MULTIPLE", 1.0)))
+            except:
+                tp1_r = 1.0
+            new_tp1_r = st.number_input(
+                "TP1 R Multiple",
+                min_value=0.5,
+                max_value=5.0,
+                value=tp1_r,
+                step=0.1,
+                help="TP1 distance in R units (risk units)."
+            )
+            try:
+                tp2_r = float(str(get_cfg(db, "TP2_R_MULTIPLE", 2.0)))
+            except:
+                tp2_r = 2.0
+            new_tp2_r = st.number_input(
+                "TP2 R Multiple",
+                min_value=1.0,
+                max_value=10.0,
+                value=tp2_r,
+                step=0.1,
+                help="TP2 full-exit distance in R units."
+            )
+        with op_adv3:
+            try:
+                tp1_partial = float(str(get_cfg(db, "TP1_PARTIAL_PCT", 50.0)))
+            except:
+                tp1_partial = 50.0
+            new_tp1_partial = st.number_input(
+                "TP1 Partial Close (%)",
+                min_value=5.0,
+                max_value=95.0,
+                value=tp1_partial,
+                step=5.0,
+                help="Position percentage to close when TP1 is hit."
+            )
+            try:
+                breakeven_buffer = float(str(get_cfg(db, "BREAKEVEN_BUFFER_PCT", 0.1)))
+            except:
+                breakeven_buffer = 0.1
+            new_breakeven_buffer = st.number_input(
+                "Breakeven Buffer (%)",
+                min_value=0.0,
+                max_value=1.0,
+                value=breakeven_buffer,
+                step=0.05,
+                help="After TP1, move stop to entry plus this buffer."
+            )
+
+        st.info(
+            f"Order Plan {'ON' if new_order_plan_enabled else 'OFF'} | "
+            f"TP Ladder {'ON' if new_tp_ladder_enabled else 'OFF'} | "
+            f"Trailing Mode: {new_plan_trailing_mode}"
+        )
+
         # --- 3. Head Hunter (Fundamental) Config ---
         st.subheader("🕵️ Head Hunter Settings")
         
@@ -323,7 +435,16 @@ def render_config_page(db):
                     {"key": "TRAILING_STOP_PCT", "value": str(new_trail_pct)},
                     {"key": "MIN_PROFIT_TO_TRAIL_PCT", "value": str(new_min_prof)},
                     {"key": "TRAILING_STOP_USE_ATR", "value": str(new_use_atr).lower()},
-                    {"key": "TRAILING_STOP_ATR_MULTIPLIER", "value": str(new_atr_mult)}
+                    {"key": "TRAILING_STOP_ATR_MULTIPLIER", "value": str(new_atr_mult)},
+                    {"key": "ORDER_PLAN_ENABLED", "value": str(new_order_plan_enabled).lower()},
+                    {"key": "ENABLE_TP_LADDER", "value": str(new_tp_ladder_enabled).lower()},
+                    {"key": "ORDER_PLAN_TRAILING_MODE", "value": new_plan_trailing_mode},
+                    {"key": "STOP_LOSS_ATR_MULTIPLIER", "value": str(new_sl_atr_mult)},
+                    {"key": "MIN_STOP_LOSS_PCT", "value": str(new_min_sl_pct)},
+                    {"key": "TP1_R_MULTIPLE", "value": str(new_tp1_r)},
+                    {"key": "TP2_R_MULTIPLE", "value": str(new_tp2_r)},
+                    {"key": "TP1_PARTIAL_PCT", "value": str(new_tp1_partial)},
+                    {"key": "BREAKEVEN_BUFFER_PCT", "value": str(new_breakeven_buffer)}
                 ]
                 for cfg in configs:
                     db.table("bot_config").upsert(cfg).execute()

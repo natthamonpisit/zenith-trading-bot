@@ -40,7 +40,19 @@ def render_sidebar(db):
         st.markdown("---")
         
         # Navigation
-        pages = ['Dashboard', 'Wallet', 'Capital Management', 'Strategy Config', 'Fundamental Lab', 'Trade History', 'Session History', 'Analyze Report', 'System Status', 'Simulation Mode']
+        pages = [
+            'Dashboard',
+            'Wallet',
+            'Capital Management',
+            'Strategy Config',
+            'Order Plans',
+            'Fundamental Lab',
+            'Trade History',
+            'Session History',
+            'Analyze Report',
+            'System Status',
+            'Simulation Mode',
+        ]
         for p in pages:
             if st.button(f"{'🔷' if st.session_state.page == p else '🔹'} {p}", key=f"nav_{p}", use_container_width=True):
                 st.session_state.page = p
