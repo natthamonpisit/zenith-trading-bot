@@ -421,6 +421,68 @@ def test_replay_bundle_invalid_run_id(monkeypatch):
     assert response.json()["error"]["code"] == "E_VALIDATION_400"
 
 
+def test_replay_feature_snapshots_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+
+    class DummyTracker:
+        def __init__(self, db):
+            self.db = db
+
+        def get_feature_snapshots(self, symbol=None, run_id=None, timeframe=None, limit=200):
+            return [
+                {
+                    "id": "f1",
+                    "symbol": symbol or "BTC/USDT",
+                    "run_id": run_id or "run-1",
+                    "timeframe": timeframe or "1h",
+                }
+            ]
+
+    monkeypatch.setattr("src.api.server.TelemetryTracker", DummyTracker)
+    response = client.get(
+        "/api/replay/feature-snapshots",
+        params={"run_id": "run-1", "symbol": "BTC/USDT", "timeframe": "1h", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"][0]["id"] == "f1"
+
+
+def test_replay_signal_scores_endpoint(monkeypatch):
+    app = create_app()
+    client = TestClient(app)
+    monkeypatch.setattr("src.api.server.get_db", lambda: object())
+
+    class DummyTracker:
+        def __init__(self, db):
+            self.db = db
+
+        def get_signal_scores(self, symbol=None, run_id=None, timeframe=None, limit=200):
+            return [
+                {
+                    "id": "s1",
+                    "symbol": symbol or "BTC/USDT",
+                    "run_id": run_id or "run-1",
+                    "timeframe": timeframe or "1h",
+                    "total_score": 77.5,
+                }
+            ]
+
+    monkeypatch.setattr("src.api.server.TelemetryTracker", DummyTracker)
+    response = client.get(
+        "/api/replay/signal-scores",
+        params={"run_id": "run-1", "symbol": "BTC/USDT", "timeframe": "1h", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"][0]["id"] == "s1"
+    assert body["data"][0]["total_score"] == 77.5
+
+
 def test_hardening_health_endpoint(monkeypatch):
     app = create_app()
     client = TestClient(app)

@@ -277,6 +277,66 @@ def _persist_manual_scan_results(db: Any, qualified_rows: List[Dict[str, Any]], 
         db.table("fundamental_coins").upsert(upsert_rows).execute()
 
 
+def _persist_universe_snapshot_rows(
+    db: Any,
+    snapshot_id: str,
+    rows: List[Dict[str, Any]],
+    mode: str,
+    actor: str,
+    stage: str,
+) -> None:
+    if not rows:
+        return
+
+    payload_rows: List[Dict[str, Any]] = []
+    for idx, row in enumerate(rows, start=1):
+        symbol = str(row.get("symbol", "")).upper().strip()
+        if not symbol:
+            continue
+
+        candidate_type = normalize_candidate_type(row.get("candidate_type"))
+        payload_rows.append(
+            {
+                "snapshot_id": snapshot_id,
+                "symbol": symbol,
+                "asset_class": candidate_type,
+                "rank": idx,
+                "source": str(row.get("source") or "manual_scan"),
+                "volume": _to_float(row.get("volume"), default=0.0),
+                "status": str(row.get("status") or "NEUTRAL").upper(),
+                "whitelist_pass": str(row.get("status") or "").upper() == "WHITELIST",
+                "inclusion_reason": f"{stage}; mode={mode}; actor={actor}",
+                "metadata": {
+                    "manual_score": _to_int(row.get("manual_score"), default=0),
+                    "notes": str(row.get("notes") or "")[:240],
+                    "candidate_type": candidate_type,
+                },
+            }
+        )
+
+    if not payload_rows:
+        return
+
+    try:
+        db.table("universe_snapshot").insert(payload_rows).execute()
+        _upsert_bot_config_value(db, "LAST_UNIVERSE_SNAPSHOT_ID", snapshot_id)
+    except Exception:
+        # Soft-fail by design: manual scan should continue even if telemetry table is not ready.
+        try:
+            db.table("system_logs").insert(
+                {
+                    "role": "Radar",
+                    "level": "WARNING",
+                    "message": (
+                        f"Universe snapshot skipped (snapshot_id={snapshot_id}) because table is unavailable "
+                        "or insert failed. Manual scan results remain usable."
+                    ),
+                }
+            ).execute()
+        except Exception:
+            pass
+
+
 def run_manual_candidate_scan(
     db: Any,
     spy: Any,
@@ -380,6 +440,15 @@ def run_manual_candidate_scan(
                 break
 
         t_stage = time.perf_counter()
+        snapshot_id = f"manual-scan-{scan_run_id}" if scan_run_id else f"manual-scan-{int(started_at.timestamp())}"
+        _persist_universe_snapshot_rows(
+            db=db,
+            snapshot_id=snapshot_id,
+            rows=qualified_rows,
+            mode=mode,
+            actor=actor,
+            stage="manual_candidate_scan",
+        )
         _persist_manual_scan_results(db, qualified_rows=qualified_rows, actor=actor)
         symbols = [str(row.get("symbol", "")).upper() for row in qualified_rows if row.get("symbol")]
         if symbols:
@@ -453,6 +522,7 @@ def run_manual_candidate_scan(
         "include_non_crypto": include_non_crypto,
         "deep_scan": deep_scan,
         "message": summary_message,
+        "universe_snapshot_id": f"manual-scan-{scan_run_id}" if scan_run_id else f"manual-scan-{int(started_at.timestamp())}",
         "timing": {
             "total_sec": round(total_elapsed_sec, 3),
             "crypto_sec": round(stage_crypto_sec, 3),

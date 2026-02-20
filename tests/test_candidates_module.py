@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.api.candidates import build_candidate_agent_map, compute_candidate_insights
+from src.api.candidates import (
+    _persist_universe_snapshot_rows,
+    build_candidate_agent_map,
+    compute_candidate_insights,
+)
 
 
 class _FakeQuery:
@@ -62,6 +66,44 @@ class _FakeDB:
 
     def table(self, table_name):
         return _FakeQuery(self, table_name)
+
+
+class _InsertCaptureQuery:
+    def __init__(self, db, table_name):
+        self._db = db
+        self._table_name = table_name
+        self._action = None
+        self._payload = None
+
+    def insert(self, payload):
+        self._action = "insert"
+        self._payload = payload
+        return self
+
+    def upsert(self, payload):
+        self._action = "upsert"
+        self._payload = payload
+        return self
+
+    def execute(self):
+        if self._table_name == "universe_snapshot" and self._action == "insert":
+            raise RuntimeError("relation universe_snapshot does not exist")
+        self._db.calls.append(
+            {
+                "table": self._table_name,
+                "action": self._action,
+                "payload": self._payload,
+            }
+        )
+        return SimpleNamespace(data=[])
+
+
+class _InsertCaptureDB:
+    def __init__(self):
+        self.calls = []
+
+    def table(self, table_name):
+        return _InsertCaptureQuery(self, table_name)
 
 
 @pytest.mark.unit
@@ -179,3 +221,29 @@ def test_compute_candidate_insights_live_filters_to_live_tradable_and_whitelist(
     assert payload["latest_scan"]["reject_count"] == 9
     assert len(payload["scanner_logs"]) == 1
     assert payload["scanner_logs"][0]["role"] == "Radar"
+
+
+@pytest.mark.unit
+def test_universe_snapshot_persist_soft_fails_when_table_missing():
+    db = _InsertCaptureDB()
+    rows = [
+        {
+            "symbol": "BTC/USDT",
+            "candidate_type": "crypto",
+            "status": "WHITELIST",
+            "source": "radar_crypto",
+            "volume": 123456.0,
+        }
+    ]
+
+    _persist_universe_snapshot_rows(
+        db=db,
+        snapshot_id="manual-scan-99",
+        rows=rows,
+        mode="PAPER",
+        actor="test",
+        stage="manual_candidate_scan",
+    )
+
+    # Should not raise, and should log warning through system_logs fallback.
+    assert any(call["table"] == "system_logs" and call["action"] == "insert" for call in db.calls)

@@ -67,3 +67,80 @@ def test_replay_bundle_shape():
     assert "ai_decisions" in bundle
     assert "rule_evaluations" in bundle
     assert "post_trade_attribution" in bundle
+    assert "feature_snapshots" in bundle
+    assert "signal_scores" in bundle
+
+
+def test_track_feature_snapshot_insert():
+    db = Mock()
+    feature_table = _build_table_mock(execute_data=[{"id": "f1"}])
+    db.table.return_value = feature_table
+
+    tracker = TelemetryTracker(db=db)
+    result = tracker.track_feature_snapshot(
+        run_id="run-1",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        features={
+            "close": 60000,
+            "volume": 1000,
+            "quote_volume": 60000000,
+            "rsi": 55,
+            "macd": 1.1,
+            "macd_signal": 0.9,
+        },
+        ai_confidence=72,
+        sentiment_score=0.2,
+    )
+
+    assert result["ok"] is True
+    db.table.assert_called_with("feature_snapshot")
+    assert feature_table.insert.called
+
+
+def test_track_signal_score_insert():
+    db = Mock()
+    score_table = _build_table_mock(execute_data=[{"id": "s1"}])
+    db.table.return_value = score_table
+
+    tracker = TelemetryTracker(db=db)
+    result = tracker.track_signal_score(
+        run_id="run-1",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        total_score=71.5,
+        threshold=60,
+        passed_threshold=True,
+        component_scores={"trend": 80},
+        weighted_scores={"trend": 20},
+        weights={"trend": 25},
+        notes=["ok"],
+    )
+
+    assert result["ok"] is True
+    db.table.assert_called_with("signal_score")
+    assert score_table.insert.called
+
+
+def test_track_universe_snapshot_rows_uses_bulk_insert():
+    db = Mock()
+    table = _build_table_mock(execute_data=[{"id": "u1"}])
+    db.table.return_value = table
+    tracker = TelemetryTracker(db=db)
+
+    result = tracker.track_universe_snapshot_rows(
+        snapshot_id="farm-1",
+        rows=[
+            {
+                "symbol": "BTC/USDT",
+                "asset_class": "crypto",
+                "rank": 1,
+                "source": "radar_scan",
+                "volume": 12345,
+            }
+        ],
+    )
+
+    assert result["ok"] is True
+    db.table.assert_called_with("universe_snapshot")
+    assert table.insert.called

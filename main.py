@@ -12,9 +12,10 @@ from src.telemetry.tracker import TelemetryTracker
 from src.roles.job_screener import HeadHunter
 from src.roles.job_price import PriceSpy
 from src.roles.job_scout import Radar
-from src.roles.job_analysis import Strategist, Judge
+from src.roles.job_analysis import Strategist, Judge, TradeDecision
 from src.roles.job_executor import SniperExecutor
 from src.roles.job_wallet import WalletSync
+from src.roles.signal_scoring import SignalScorer
 
 # --- IMPORT SESSION MANAGER ---
 from src.session_manager import (
@@ -51,6 +52,7 @@ strategist = Strategist()
 print("✅ Strategist ready")
 tiered_ai_engine = TieredAIDecisionEngine(strategist=strategist)
 telemetry_tracker = TelemetryTracker(db=db)
+signal_scorer = SignalScorer(db=db)
 
 judge = Judge()
 sniper = SniperExecutor(spy_instance=price_spy)
@@ -70,6 +72,81 @@ def get_config_value(key, default=None):
     except Exception:
         pass
     return default
+
+
+def _to_float_safe(raw, default=0.0):
+    try:
+        if raw is None:
+            return default
+        if pd.isna(raw):
+            return default
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _infer_asset_class(symbol, candidate_type=None):
+    normalized = str(candidate_type or "").strip().lower()
+    if normalized in {"crypto", "stock", "gold", "silver"}:
+        return normalized
+    sym = str(symbol or "").upper().strip()
+    if "/" in sym:
+        return "crypto"
+    if "XAU" in sym or "GOLD" in sym:
+        return "gold"
+    if "XAG" in sym or "SILVER" in sym:
+        return "silver"
+    return "stock" if sym else "other"
+
+
+def persist_universe_snapshot(snapshot_id, candidates, stage="farming"):
+    if not candidates:
+        return
+    rows = []
+    include_reason = (
+        f"{stage}; universe={getattr(head_hunter, 'universe', 'TOP_100')}; "
+        f"whitelist_policy={getattr(head_hunter, 'whitelist_policy', 'RELAXED')}"
+    )
+    for idx, candidate in enumerate(candidates, start=1):
+        if isinstance(candidate, str):
+            symbol = candidate.strip().upper()
+            row = {}
+        elif isinstance(candidate, dict):
+            symbol = str(candidate.get("symbol", "")).upper().strip()
+            row = candidate
+        else:
+            continue
+        if not symbol:
+            continue
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "asset_class": _infer_asset_class(symbol=symbol, candidate_type=row.get("candidate_type")),
+                "rank": int(row.get("screener_rank") or idx),
+                "source": str(row.get("source") or "radar_scan"),
+                "volume": _to_float_safe(row.get("volume"), default=0.0),
+                "status": str(row.get("status") or "NEUTRAL").upper(),
+                "whitelist_pass": bool(row.get("whitelist_pass", False)),
+                "inclusion_reason": include_reason,
+                "metadata": {
+                    "volume_threshold": _to_float_safe(row.get("volume_threshold"), default=0.0),
+                    "stage": stage,
+                },
+            }
+        )
+
+    if not rows:
+        return
+    result = telemetry_tracker.track_universe_snapshot_rows(snapshot_id=snapshot_id, rows=rows)
+    if not result.get("ok"):
+        print(f"Universe snapshot save error: {result.get('error')}")
+        return
+
+    try:
+        db.table("bot_config").upsert({"key": "LAST_UNIVERSE_SNAPSHOT_ID", "value": str(snapshot_id)}).execute()
+    except Exception as config_error:
+        print(f"Universe snapshot config update error: {config_error}")
 
 
 def is_ai_tiering_enabled():
@@ -248,15 +325,71 @@ def process_pair(pair, timeframe, intent="ENTRY"):
         balance = get_available_trading_balance(mode=mode, actual_balance=actual_balance)
         
         # Convert AI output to needed format
-        ai_data = {'confidence': analysis.get('confidence'), 'recommendation': analysis.get('recommendation')}
+        ai_data = {
+            'confidence': analysis.get('confidence'),
+            'recommendation': analysis.get('recommendation'),
+            'sentiment_score': analysis.get('sentiment_score'),
+        }
+        latest_row = df.iloc[-1]
+        current_price = _to_float_safe(latest_row.get('close'), default=0.0)
+        base_volume = _to_float_safe(latest_row.get('volume'), default=0.0)
+        quote_volume = current_price * base_volume if current_price > 0 and base_volume > 0 else 0.0
+        current_atr = _to_float_safe(latest_row.get('atr'), default=0.0)
+
         tech_data = {
-            'rsi': df['rsi'].iloc[-1],
-            'ema_50': df['ema_50'].iloc[-1],
-            'macd': df['macd'].iloc[-1],
-            'macd_signal': df['signal'].iloc[-1],
-            'close': df['close'].iloc[-1],
+            'rsi': _to_float_safe(latest_row.get('rsi'), default=50.0),
+            'ema_20': _to_float_safe(latest_row.get('ema_20'), default=0.0),
+            'ema_50': _to_float_safe(latest_row.get('ema_50'), default=0.0),
+            'ema_200': _to_float_safe(latest_row.get('ema_200'), default=0.0),
+            'macd': _to_float_safe(latest_row.get('macd'), default=0.0),
+            'macd_signal': _to_float_safe(latest_row.get('signal'), default=0.0),
+            'close': current_price,
+            'atr': current_atr,
+            'adx': _to_float_safe(latest_row.get('adx'), default=0.0),
+            'volume': base_volume,
+            'quote_volume': quote_volume,
+            'price_position_score': _to_float_safe(latest_row.get('price_position_score'), default=1.5),
+            'bb_upper': _to_float_safe(latest_row.get('bb_upper'), default=0.0),
+            'bb_lower': _to_float_safe(latest_row.get('bb_lower'), default=0.0),
             'market_trend': trend_data  # Add trend data for downtrend protection
         }
+        run_id = str(tier_run_id or f"{pair}-{int(time.time())}")
+        score_result = None
+        try:
+            score_result = signal_scorer.score(
+                tech_data=tech_data,
+                ai_data=ai_data,
+                candidate_meta={
+                    "quote_volume": quote_volume,
+                    "source": "trading_cycle",
+                },
+            )
+            print(
+                f"   - Signal Score: {score_result.total_score:.1f}/100 "
+                f"(threshold: {score_result.threshold:.1f})"
+            )
+            telemetry_tracker.track_feature_snapshot(
+                run_id=run_id,
+                symbol=pair,
+                timeframe=timeframe,
+                features=tech_data,
+                ai_confidence=_to_float_safe(ai_data.get('confidence'), default=0.0),
+                sentiment_score=_to_float_safe(ai_data.get('sentiment_score'), default=0.0),
+            )
+            telemetry_tracker.track_signal_score(
+                run_id=run_id,
+                symbol=pair,
+                timeframe=timeframe,
+                total_score=score_result.total_score,
+                threshold=score_result.threshold,
+                passed_threshold=score_result.passed_threshold,
+                component_scores=score_result.component_scores,
+                weighted_scores=score_result.weighted_scores,
+                weights=score_result.weights,
+                notes=score_result.notes,
+            )
+        except Exception as scoring_error:
+            print(f"Signal scoring save error for {pair}: {scoring_error}")
         
         is_sim = (mode == "PAPER")
         ai_rec = analysis.get('recommendation', 'UNKNOWN')
@@ -275,6 +408,18 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             return
 
         verdict = judge.evaluate(ai_data, tech_data, balance, is_sim=is_sim, asset_id=asset_id)
+        if (
+            ai_rec == "BUY"
+            and score_result
+            and score_result.score_gate_enabled
+            and not score_result.passed_threshold
+        ):
+            verdict = TradeDecision(
+                decision="REJECTED",
+                size=0,
+                reason=f"Signal Score Gate: {score_result.total_score:.1f} < {score_result.threshold:.1f}",
+            )
+
         print(f"   - AI Recommendation: {ai_rec} (Confidence: {ai_data['confidence']}%)")
         print(f"   - Judge Verdict: {verdict.decision} -> {verdict.reason}")
 
@@ -283,7 +428,7 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             min_conf = float(judge.config.get("AI_CONF_THRESHOLD", 60))
             rsi_limit = float(judge.config.get("RSI_THRESHOLD", 75))
             telemetry_tracker.track_rule_evaluation(
-                run_id=tier_run_id,
+                run_id=run_id,
                 symbol=pair,
                 rule_name="AI_CONF_THRESHOLD",
                 passed=float(ai_data.get("confidence", 0)) >= min_conf,
@@ -292,7 +437,7 @@ def process_pair(pair, timeframe, intent="ENTRY"):
                 reason=verdict.reason,
             )
             telemetry_tracker.track_rule_evaluation(
-                run_id=tier_run_id,
+                run_id=run_id,
                 symbol=pair,
                 rule_name="RSI_THRESHOLD",
                 passed=float(tech_data.get("rsi", 0)) <= rsi_limit,
@@ -300,8 +445,18 @@ def process_pair(pair, timeframe, intent="ENTRY"):
                 threshold_value=rsi_limit,
                 reason=verdict.reason,
             )
+            if score_result:
+                telemetry_tracker.track_rule_evaluation(
+                    run_id=run_id,
+                    symbol=pair,
+                    rule_name="SIGNAL_SCORE_THRESHOLD",
+                    passed=score_result.passed_threshold,
+                    observed_value=score_result.total_score,
+                    threshold_value=score_result.threshold,
+                    reason=verdict.reason,
+                )
             telemetry_tracker.track_rule_evaluation(
-                run_id=tier_run_id,
+                run_id=run_id,
                 symbol=pair,
                 rule_name="JUDGE_FINAL",
                 passed=verdict.decision == "APPROVED",
@@ -313,9 +468,6 @@ def process_pair(pair, timeframe, intent="ENTRY"):
             print(f"Telemetry rule save error: {telemetry_error}")
 
         # Log Signal to DB (only BUY/SELL, not WAIT/HOLD)
-        current_price = float(df['close'].iloc[-1])
-        current_atr = float(df['atr'].iloc[-1]) if 'atr' in df.columns and not pd.isna(df['atr'].iloc[-1]) else 0.0
-
         signal_data = {
             "asset_id": asset_id,
             "signal_type": ai_rec,
@@ -571,6 +723,13 @@ def run_farming_cycle():
              try: db.table("farming_history").update({"status": "FAILED", "logs": "No candidates found"}).eq("id", farm_id).execute()
              except Exception as e: print(f"Farming history update error: {e}")
         return
+
+    # 2b. Persist candidate universe snapshot for Phase 1 replay/audit
+    snapshot_id = f"farm-{farm_id}" if farm_id else f"farm-{int(time.time())}"
+    try:
+        persist_universe_snapshot(snapshot_id=snapshot_id, candidates=candidates, stage="farming_cycle")
+    except Exception as snapshot_error:
+        print(f"Universe snapshot error: {snapshot_error}")
         
     # 3. Save "Harvest" to DB for Sniper
     # Store list of symbols to trade
